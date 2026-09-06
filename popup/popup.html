@@ -4,13 +4,54 @@
   <meta charset="UTF-8">
   <title>Story Reader</title>
   <style>
-    body { width: 220px; padding: 12px; font-family: system-ui, sans-serif; }
-    h3 { margin: 0 0 8px; font-size: 15px; }
-    p { margin: 0; font-size: 13px; color: #555; }
+    body {
+      width: 240px;
+      padding: 14px;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #111827;
+      color: #e5e7eb;
+      margin: 0;
+    }
+    h3 {
+      margin: 0 0 12px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    button {
+      width: 100%;
+      padding: 10px 12px;
+      border: none;
+      border-radius: 8px;
+      background: #3b82f6;
+      color: white;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-bottom: 8px;
+    }
+    button:hover {
+      background: #2563eb;
+    }
+    button.secondary {
+      background: #374151;
+    }
+    button.secondary:hover {
+      background: #4b5563;
+    }
+    .status {
+      font-size: 12px;
+      color: #9ca3af;
+      margin-top: 8px;
+      line-height: 1.4;
+    }
   </style>
 </head>
 <body>
   <h3>Story Reader</h3>
-  <p>Extension đang chạy (MVP Giai đoạn 0)</p>
+  <button id="btn-start">Bắt đầu đọc</button>
+  <button id="btn-hide" class="secondary">Ẩn thanh công cụ</button>
+  <div class="status" id="status">Bấm "Bắt đầu đọc" để hiện thanh điều khiển trên trang.</div>
+
+  <script src="popup.js"></script>
 </body>
 </html>

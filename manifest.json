@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Story Reader & Translator",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Đọc truyện, dịch trang, tự cuộn — hoạt động trên mọi trang web",
   "permissions": ["storage", "scripting", "activeTab"],
   "host_permissions": ["<all_urls>"],
@@ -12,8 +12,12 @@
     {
       "matches": ["<all_urls>"],
       "js": [
-        "content-scripts/detector.js"
+        "libs/readability.js",
+        "content-scripts/detector.js",
+        "content-scripts/tts-engine.js",
+        "content-scripts/floating-toolbar.js"
       ],
+      "css": ["ui/floating-toolbar.css"],
       "run_at": "document_idle"
     }
   ],
