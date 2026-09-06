@@ -1,0 +1,3 @@
+node_modules/
+libs/tessdata/*.traineddata
+.DS_Store
