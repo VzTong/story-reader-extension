@@ -4,27 +4,65 @@ let currentUtterances = [];
 let isPaused = false;
 let currentIndex = 0;
 let selectedVoiceURI = null;
+let currentVoiceName = "";
 
 function splitIntoSentences(text) {
-  // Tách câu sạch, bỏ qua số thứ tự nếu có
   const raw = text.match(/[^.!?…]+[.!?…]+["']?|[^.!?…]+$/g) || [text];
   return raw
     .map((s) => s.trim())
     .filter((s) => s.length > 5)
-    .map((s) => s.replace(/^\d+[\.\)]\s*/, "")); // bỏ số thứ tự đầu câu nếu có
+    .map((s) => s.replace(/^\d+[\.\)]\s*/, ""));
 }
 
 function getAllVoices() {
   return speechSynthesis.getVoices();
 }
 
-function getBestVietnameseVoice() {
+function detectPageLanguage(text) {
+  if (!text) return "vi";
+  const vietChars = (
+    text.match(
+      /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/gi,
+    ) || []
+  ).length;
+  const totalLetters = (
+    text.match(
+      /[a-zA-Zàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/g,
+    ) || []
+  ).length;
+  if (totalLetters === 0) return "vi";
+  return vietChars / totalLetters > 0.03 ? "vi" : "en";
+}
+
+function getBestVoice(lang = "vi") {
   const voices = getAllVoices();
+  if (!voices.length) return null;
+
   if (selectedVoiceURI) {
     const chosen = voices.find((v) => v.voiceURI === selectedVoiceURI);
     if (chosen) return chosen;
   }
-  const preferred = [
+
+  if (lang === "en") {
+    const preferredEn = [
+      "Google US English",
+      "Microsoft Aria Online (Natural) - English (United States)",
+      "Microsoft Guy Online (Natural) - English (United States)",
+      "Samantha",
+      "Alex",
+      "Google UK English Female",
+      "Google UK English Male",
+    ];
+    for (const name of preferredEn) {
+      const found = voices.find((v) => v.name.includes(name));
+      if (found) return found;
+    }
+    return (
+      voices.find((v) => v.lang.toLowerCase().startsWith("en")) || voices[0]
+    );
+  }
+
+  const preferredVi = [
     "Microsoft HoaiMy Online (Natural) - Vietnamese (Vietnam)",
     "Microsoft NamMinh Online (Natural) - Vietnamese (Vietnam)",
     "Microsoft HoaiMy",
@@ -35,7 +73,7 @@ function getBestVietnameseVoice() {
     "Linh",
     "My",
   ];
-  for (const name of preferred) {
+  for (const name of preferredVi) {
     const found = voices.find((v) => v.name.includes(name));
     if (found) return found;
   }
@@ -69,7 +107,6 @@ function createSentencePanel(sentences) {
       <span class="sr-text">${sentence}</span>
     `;
     item.addEventListener("click", () => {
-      // Dừng hoàn toàn rồi đọc lại từ câu được chọn
       window.StoryTTS.stop();
       setTimeout(() => {
         window.StoryTTS.speakQueue(sentences, index);
@@ -99,7 +136,7 @@ function updateSentenceProgress(index, total) {
   }
 }
 
-/* ===== Tô sáng + cuộn trên trang ===== */
+/* ===== Tô sáng chính xác hơn ===== */
 function clearPageHighlight() {
   document.querySelectorAll(".sr-page-highlight").forEach((el) => {
     el.classList.remove("sr-page-highlight");
@@ -107,25 +144,21 @@ function clearPageHighlight() {
 }
 
 function highlightAndScroll(index) {
-  // 1. Cập nhật panel
   updateSentenceProgress(index, currentUtterances.length);
-
-  // 2. Xóa highlight cũ
   clearPageHighlight();
 
   if (!currentUtterances[index]) return;
 
   const sentence = currentUtterances[index].trim();
-  if (sentence.length < 8) return;
+  if (sentence.length < 6) return;
 
-  // Lấy 2-3 từ đầu + 2-3 từ cuối để tìm chính xác hơn
-  const words = sentence.split(/\s+/).filter(Boolean);
-  const startKey = words.slice(0, 4).join(" ");
-  const endKey = words.slice(-3).join(" ");
+  // Lấy đoạn ngắn để tìm (tránh match quá rộng)
+  const searchKey =
+    sentence.length > 60 ? sentence.substring(0, 45).trim() : sentence;
 
-  // Ưu tiên các container nội dung thật
+  // Chỉ tìm trong nội dung trang, **loại bỏ** panel và toolbar của extension
   const containers = [
-    document.querySelector(".cha-content"),          // webnovel
+    document.querySelector(".cha-content"),
     document.querySelector(".chapter_content"),
     document.querySelector(".novel-content"),
     document.querySelector("div.entry-content"),
@@ -133,51 +166,74 @@ function highlightAndScroll(index) {
     document.querySelector("article"),
     document.querySelector("main"),
     document.querySelector("#content"),
-    document.body
   ].filter(Boolean);
 
+  // Nếu không tìm thấy container đặc thù thì dùng body nhưng loại trừ panel
+  if (containers.length === 0) {
+    containers.push(document.body);
+  }
+
   let bestEl = null;
+  let bestScore = Infinity;
 
-  outer:
   for (const container of containers) {
-    // Tìm trong các thẻ có text
-    const candidates = container.querySelectorAll("p, div, span, section");
-    for (const el of candidates) {
-      const text = (el.innerText || "").trim();
-      if (text.length < 15) continue;
+    const candidates = [
+      ...container.querySelectorAll("p"),
+      ...container.querySelectorAll("div, span, section"),
+    ];
 
-      // Khớp mạnh: chứa cả đoạn đầu hoặc đoạn cuối
-      if (text.includes(startKey) || text.includes(endKey) || text.includes(sentence.substring(0, 40))) {
-        // Ưu tiên thẻ nhỏ hơn (gần câu thật)
-        if (!bestEl || el.innerText.length < bestEl.innerText.length) {
+    for (const el of candidates) {
+      // Bỏ qua mọi thứ thuộc về extension
+      if (
+        el.closest("#sr-sentence-panel") ||
+        el.closest("#story-reader-toolbar") ||
+        el.closest("#sr-voice-panel")
+      ) {
+        continue;
+      }
+
+      const text = (el.innerText || "").trim();
+      if (text.length < 10) continue;
+
+      if (text.includes(searchKey)) {
+        // Ưu tiên thẻ có độ dài gần với câu + không quá dài
+        const lenDiff = Math.abs(text.length - sentence.length);
+        const tooBigPenalty = text.length > sentence.length * 3 ? 500 : 0;
+        const score = lenDiff + tooBigPenalty;
+
+        if (score < bestScore) {
+          bestScore = score;
           bestEl = el;
         }
       }
+      if (bestEl && bestScore < 300) break;
     }
-    if (bestEl) break outer;
+
+    if (bestEl && bestScore < 100) break;
   }
 
-  // 3. Tô sáng + cuộn
   if (bestEl) {
     bestEl.classList.add("sr-page-highlight");
-    bestEl.scrollIntoView({
-      behavior: "smooth",
-      block: "center",
-      inline: "nearest"
-    });
-  } else {
-    // Fallback: cuộn theo tỷ lệ tiến độ
-    const ratio = index / Math.max(currentUtterances.length - 1, 1);
-    const contentEl = containers[0] || document.body;
-    const target =
-      contentEl.offsetTop +
-      contentEl.offsetHeight * ratio -
-      window.innerHeight * 0.35;
 
-    window.scrollTo({
-      top: Math.max(0, target),
-      behavior: "smooth"
-    });
+    // Chỉ cuộn nếu auto-scroll đang bật
+    if (window.StoryReaderUI?.isAutoScrollEnabled?.() !== false) {
+      bestEl.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+        inline: "nearest",
+      });
+    }
+  } else {
+    // fallback cũng kiểm tra auto-scroll
+    if (window.StoryReaderUI?.isAutoScrollEnabled?.() !== false) {
+      const ratio = index / Math.max(currentUtterances.length - 1, 1);
+      const contentEl = containers[0] || document.body;
+      const target =
+        contentEl.offsetTop +
+        contentEl.offsetHeight * ratio -
+        window.innerHeight * 0.35;
+      window.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+    }
   }
 }
 
@@ -190,6 +246,24 @@ function speakQueue(sentences, startIndex = 0) {
   isPaused = false;
 
   createSentencePanel(sentences);
+
+  const pageLang = detectPageLanguage(sentences.join(" "));
+  const voice = getBestVoice(pageLang);
+  currentVoiceName = voice
+    ? voice.name
+    : pageLang === "en"
+      ? "English"
+      : "Tiếng Việt";
+
+  // Cập nhật tên giọng lên toolbar nếu có
+  const voiceLabel = document.getElementById("sr-voice-label");
+  if (voiceLabel) {
+    voiceLabel.textContent =
+      currentVoiceName.length > 22
+        ? currentVoiceName.substring(0, 20) + "…"
+        : currentVoiceName;
+    voiceLabel.title = currentVoiceName;
+  }
 
   function speakNext() {
     if (isPaused || currentIndex >= currentUtterances.length) {
@@ -205,12 +279,11 @@ function speakQueue(sentences, startIndex = 0) {
     const utter = new SpeechSynthesisUtterance(currentUtterances[currentIndex]);
     utter.rate = window.StoryReaderRate || 1.0;
 
-    const voice = getBestVietnameseVoice();
     if (voice) {
       utter.voice = voice;
       utter.lang = voice.lang;
     } else {
-      utter.lang = "vi-VN";
+      utter.lang = pageLang === "en" ? "en-US" : "vi-VN";
     }
 
     utter.onend = () => {
@@ -263,6 +336,27 @@ function stop() {
 
 function setVoice(voiceURI) {
   selectedVoiceURI = voiceURI;
+  const voices = getAllVoices();
+  const v = voices.find((x) => x.voiceURI === voiceURI);
+  currentVoiceName = v ? v.name : "";
+
+  const voiceLabel = document.getElementById("sr-voice-label");
+  if (voiceLabel && currentVoiceName) {
+    voiceLabel.textContent =
+      currentVoiceName.length > 22
+        ? currentVoiceName.substring(0, 20) + "…"
+        : currentVoiceName;
+    voiceLabel.title = currentVoiceName;
+  }
+
+  // Nếu đang đọc thì restart câu hiện tại với giọng mới
+  if (currentUtterances.length > 0 && !isPaused) {
+    const keepIndex = currentIndex;
+    speechSynthesis.cancel();
+    setTimeout(() => {
+      speakQueue(currentUtterances, keepIndex);
+    }, 100);
+  }
 }
 
 window.StoryTTS = {
@@ -271,9 +365,10 @@ window.StoryTTS = {
   pause,
   resume,
   stop,
-  getBestVietnameseVoice,
+  getBestVoice,
   getAllVoices,
   setVoice,
+  detectPageLanguage,
 };
 
 console.log("[Story Reader] tts-engine.js loaded");

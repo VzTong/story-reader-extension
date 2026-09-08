@@ -4,20 +4,57 @@ function cleanText(text) {
   if (!text) return "";
 
   return text
-    // bỏ chuỗi ***** dài
-    .replace(/\*{5,}/g, "")
-    // bỏ "Edit: xxx"
-    .replace(/Edit\s*:\s*\S+/gi, "")
-    // bỏ ngày kiểu 25.12.2020 hoặc 2020-12-25
-    .replace(/\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g, "")
-    .replace(/\b\d{4}[./-]\d{1,2}[./-]\d{1,2}\b/g, "")
-    // bỏ các cụm điều hướng thừa
-    .replace(/(chương|chapter)\s*(trước|sau|tiếp|prev|next)/gi, "")
+    // Bỏ chuỗi ***** dài
+    .replace(/\*{4,}/g, "")
+    // Bỏ "Edit: xxx"
+    .replace(/Edit\s*:\s*[\w\-_.]+/gi, "")
+    // Bỏ ngày tháng
+    .replace(/\b\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}\b/g, "")
+    .replace(/\b\d{4}[./\-]\d{1,2}[./\-]\d{1,2}\b/g, "")
+    // Bỏ cụm điều hướng
+    .replace(/(chương|chapter|hồi)\s*(trước|sau|tiếp|prev|next|previous)/gi, "")
     .replace(/bài\s*(trước|tiếp theo)/gi, "")
-    // bỏ khoảng trắng thừa
+    // Bỏ tiêu đề truyện bị lặp (nguontruyen)
+    .replace(/Truyện\s+Sau Khi Nữ Cải Nam Trang Tôi Cầm Kịch Bản Nam Chính/gi, "")
+    .replace(/Sau Khi Nu Cai Nam Trang Toi Cam Kich Ban Nam Chinh/gi, "")
+    // Bỏ khoảng trắng thừa
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
+}
+
+function getBetterTitle() {
+  // Ưu tiên cao cho nguontruyen
+  const specific = [
+    "h1",
+    ".chapter-title",
+    ".cha-title",
+    ".title",
+    "[class*='chapter']",
+    "[class*='chap-title']",
+    ".entry-title"
+  ];
+
+  for (const sel of specific) {
+    const els = document.querySelectorAll(sel);
+    for (const el of els) {
+      const t = cleanText(el.innerText || el.textContent || "");
+      if (t && t.length >= 4 && t.length < 120 && !/edit|ngày|date/i.test(t)) {
+        return t;
+      }
+    }
+  }
+
+  // Lấy từ breadcrumb hoặc select box (nguontruyen hay dùng)
+  const select = document.querySelector("select, .chapter-select, [name*='chapter']");
+  if (select && select.options && select.selectedIndex >= 0) {
+    const t = cleanText(select.options[select.selectedIndex].text);
+    if (t) return t;
+  }
+
+  // Fallback document.title
+  let docTitle = (document.title || "").split(/[-|–—]/)[0].trim();
+  return cleanText(docTitle) || "Chương hiện tại";
 }
 
 function detectContent() {
@@ -27,21 +64,25 @@ function detectContent() {
     const article = reader.parse();
 
     if (article && article.textContent && article.textContent.trim().length > 200) {
-      let cleanTitle = cleanText(article.title || "");
+      let cleanTitle = cleanText(article.title || "") || getBetterTitle();
       let body = cleanText(article.textContent);
 
-      // Nếu body bắt đầu bằng title thì bỏ phần trùng
-      if (cleanTitle && body.toLowerCase().startsWith(cleanTitle.toLowerCase())) {
-        body = body.slice(cleanTitle.length).trim();
+      // Loại bỏ title bị lặp ở đầu body
+      if (cleanTitle) {
+        const escaped = cleanTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        body = body.replace(new RegExp(escaped, "gi"), "").trim();
       }
 
-      // Bỏ dòng đầu nếu còn là tiêu đề chương
-      body = body.replace(/^(chương|chapter|hồi)\s*\d+[.:]?\s*[^\n]{0,80}\n?/i, "").trim();
+      // Bỏ dòng "Chương x: ..." ở đầu
+      body = body.replace(/^(chương|chapter|hồi)\s*\d+[.:]?\s*[^\n]{0,120}\n?/i, "").trim();
+
+      // Nếu body bắt đầu bằng số hoặc chữ thừa thì cắt
+      body = body.replace(/^[0-9\s:.\-]+/, "").trim();
 
       const fullText = cleanTitle ? `${cleanTitle}. ${body}` : body;
 
       return {
-        title: cleanTitle || document.title,
+        title: cleanTitle || "Không có tiêu đề",
         text: fullText,
         source: "readability"
       };
@@ -52,6 +93,9 @@ function detectContent() {
 
   // Fallback heuristic
   const contentSelectors = [
+    ".cha-content",
+    ".chapter_content",
+    ".novel-content",
     "div.entry-content",
     "article .post-content",
     "article",
@@ -59,18 +103,14 @@ function detectContent() {
     "#chapter-content",
     ".content",
     "main",
-    "#content",
-    ".cha-content",          // webnovel
-    ".chapter_content",
-    ".novel-content"
+    "#content"
   ];
 
   for (const sel of contentSelectors) {
     const el = document.querySelector(sel);
     if (el && el.innerText.trim().length > 200) {
       let text = cleanText(el.innerText);
-      const h1 = document.querySelector("h1.entry-title, h1, .cha-title, .chapter-title");
-      let cleanTitle = h1 ? cleanText(h1.innerText) : document.title;
+      let cleanTitle = getBetterTitle();
 
       if (cleanTitle && text.toLowerCase().startsWith(cleanTitle.toLowerCase())) {
         text = text.slice(cleanTitle.length).trim();
@@ -79,7 +119,7 @@ function detectContent() {
       const fullText = cleanTitle ? `${cleanTitle}. ${text}` : text;
 
       return {
-        title: cleanTitle,
+        title: cleanTitle || "Không có tiêu đề",
         text: fullText,
         source: "heuristic"
       };
