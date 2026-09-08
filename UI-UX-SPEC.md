@@ -96,13 +96,4 @@ Menu nhỏ, bo góc đẹp, hiện gần bubble.
 
 ## 4. Phong cách thiết kế (Design Tokens)
 
-```css
---sr-bg: rgba(17, 24, 39, 0.92);
---sr-bg-solid: #111827;
---sr-bg-panel: rgba(17, 24, 39, 0.97);
---sr-border: rgba(255, 255, 255, 0.09);
---sr-text: #f3f4f6;
---sr-muted: #9ca3af;
---sr-accent: #3b82f6;
---sr-radius: 14px – 16px;
---sr-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+hiện đại - cyper
