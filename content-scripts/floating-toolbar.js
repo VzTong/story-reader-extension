@@ -12,6 +12,7 @@
   let settingsOpen = false;
   let highlightEnabled = true;
   let autoScrollEnabled = false;
+  let toolbarVisible = false;
   let currentTheme = "dark";
 
   // ===== Create UI =====
@@ -28,6 +29,7 @@
       bubble.appendChild(img);
 
       document.body.appendChild(bubble);
+      bubble.style.display = "none"; // chỉ hiện khi popup "Bắt đầu đọc"
 
       const saved = localStorage.getItem("sr-bubble-pos");
       if (saved) {
@@ -36,12 +38,12 @@
           bubble.style.left = pos.left + "px";
           bubble.style.top = pos.top + "px";
         } catch (_) {
-          bubble.style.right = "16px";
-          bubble.style.bottom = "120px";
+          bubble.style.right = "12px";
+          bubble.style.bottom = "100px";
         }
       } else {
-        bubble.style.right = "16px";
-        bubble.style.bottom = "120px";
+        bubble.style.right = "12px";
+        bubble.style.bottom = "100px";
       }
     } else {
       bubble = document.getElementById("sr-bubble");
@@ -67,7 +69,7 @@
         <div class="sr-divider"></div>
         <button type="button" id="sr-menu-highlight">
           <span class="sr-icon">✎</span>
-          <span id="sr-menu-highlight-text">Highlight</span>
+          <span id="sr-menu-highlight-text">Tắt highlight</span>
         </button>
         <button type="button" id="sr-menu-theme">
           <span class="sr-icon">◐</span>
@@ -94,10 +96,11 @@
       ttsPanel.innerHTML = `
         <div class="sr-tts-header">
           <span>Danh sách câu</span>
-          <button type="button" id="sr-tts-toggle-settings" title="Cài đặt giọng">⚙</button>
+          <button type="button" id="sr-tts-toggle-settings" title="Cài đặt giọng" title="Cài đặt giọng">⚙</button>
           <button type="button" id="sr-tts-close" title="Đóng">✕</button>
         </div>
         <div id="sr-sentence-list"></div>
+        <div class="sr-panel-split" id="sr-panel-split" title="Kéo để chỉnh kích thước"></div>
         <div class="sr-tts-settings" id="sr-tts-settings">
           <div class="sr-set-group">
             <div class="sr-set-title">Giọng nói</div>
@@ -123,8 +126,8 @@
             </div>
             <div class="sr-slider-row">
               <span class="sr-slider-label">Tốc độ cuộn</span>
-              <input type="range" id="sr-scroll-speed" min="0.3" max="3" step="0.1" value="1">
-              <span class="sr-val" id="sr-scroll-speed-val">1.0</span>
+              <input type="range" id="sr-scroll-speed" min="40" max="280" step="5" value="135">
+              <span class="sr-val" id="sr-scroll-speed-val">135</span>
             </div>
           </div>
 
@@ -155,7 +158,166 @@
   }
 
   // ===== Bubble Drag & Dock =====
+  // ===== Kagane-style scroll HUD =====
+  let scrollHud = null;
+  let scrollHudVisible = false;
+
+  function createScrollHud() {
+    if (document.getElementById("sr-scroll-hud")) {
+      scrollHud = document.getElementById("sr-scroll-hud");
+      positionScrollHud();
+      return;
+    }
+    scrollHud = document.createElement("div");
+    scrollHud.id = "sr-scroll-hud";
+    scrollHud.innerHTML = `
+      <button type="button" id="sr-hud-pause" title="Tạm dừng / Tiếp tục" aria-label="Pause">▶</button>
+      <button type="button" id="sr-hud-minus" title="Giảm tốc độ">−</button>
+      <div id="sr-hud-speed"><strong>135</strong><small>px/s</small></div>
+      <button type="button" id="sr-hud-plus" title="Tăng tốc độ">+</button>
+      <div id="sr-hud-status"></div>
+      <button type="button" id="sr-hud-close" title="Tắt auto-scroll">✕</button>
+    `;
+    document.body.appendChild(scrollHud);
+    positionScrollHud();
+
+    document.getElementById("sr-hud-pause")?.addEventListener("click", () => {
+      // pause without auto-resume; long-press style not needed
+      window.StoryTTS?.toggleAutoScrollPause?.(0);
+    });
+    document.getElementById("sr-hud-minus")?.addEventListener("click", () => {
+      window.StoryTTS?.adjustScrollSpeed?.(-15);
+    });
+    document.getElementById("sr-hud-plus")?.addEventListener("click", () => {
+      window.StoryTTS?.adjustScrollSpeed?.(15);
+    });
+    document.getElementById("sr-hud-close")?.addEventListener("click", () => {
+      window.StoryTTS?.stopAutoScroll?.();
+      autoScrollEnabled = false;
+      const textEl = document.getElementById("sr-menu-scroll-text");
+      if (textEl) textEl.textContent = "Auto-scroll";
+      hideScrollHud();
+      updateBubbleActive();
+    });
+    scrollHud.addEventListener("mouseenter", () => {
+      clearTimeout(hudFadeTimer);
+      scrollHud.classList.remove("sr-faded");
+    });
+    scrollHud.addEventListener("mouseleave", () => {
+      if (autoScrollEnabled) scheduleHudFade();
+    });
+  }
+
+  function positionScrollHud() {
+    if (!scrollHud || !bubble) return;
+    const br = bubble.getBoundingClientRect();
+    const hudW = 48;
+    const gap = 10;
+    // Place above bubble, aligned to same edge
+    let left = br.left + (br.width - hudW) / 2;
+    left = Math.max(6, Math.min(left, window.innerWidth - hudW - 6));
+    // Measure hud height after visible
+    const hudH = scrollHud.offsetHeight || 160;
+    let top = br.top - hudH - gap;
+    if (top < 8) {
+      // if not enough space above, put below bubble
+      top = br.bottom + gap;
+    }
+    scrollHud.style.left = left + "px";
+    scrollHud.style.top = top + "px";
+    scrollHud.style.right = "auto";
+    scrollHud.style.bottom = "auto";
+    scrollHud.style.transform = "none";
+  }
+
+  function showScrollHud() {
+    createScrollHud();
+    scrollHud?.classList.add("sr-visible");
+    scrollHudVisible = true;
+    positionScrollHud();
+  }
+
+  function hideScrollHud() {
+    scrollHud?.classList.remove("sr-visible");
+    scrollHudVisible = false;
+  }
+
+  let hudFadeTimer = null;
+
+  function scheduleHudFade() {
+    clearTimeout(hudFadeTimer);
+    scrollHud?.classList.remove("sr-faded");
+    hudFadeTimer = setTimeout(() => {
+      if (scrollHudVisible && scrollHud) scrollHud.classList.add("sr-faded");
+    }, 1800);
+  }
+
+  function updateScrollHud(state) {
+    if (!state) return;
+    if (state.active) showScrollHud();
+    else {
+      hideScrollHud();
+      return;
+    }
+    createScrollHud();
+    scrollHud?.classList.remove("sr-faded");
+    const speedEl = document.getElementById("sr-hud-speed");
+    const statusEl = document.getElementById("sr-hud-status");
+    const pauseBtn = document.getElementById("sr-hud-pause");
+    if (speedEl) {
+      const px = state.pxPerSec || 135;
+      speedEl.innerHTML = "<strong>" + px + "</strong><small>px/s</small>";
+    }
+    if (statusEl) {
+      if (state.paused && state.resumeIn > 0) {
+        statusEl.textContent = state.resumeIn + "s";
+      } else if (state.paused) {
+        statusEl.textContent = "Paused";
+      } else {
+        statusEl.textContent = "";
+      }
+    }
+    if (pauseBtn) {
+      pauseBtn.textContent = state.paused ? "▶" : "⏸";
+      pauseBtn.title = state.paused ? "Tiếp tục" : "Tạm dừng";
+    }
+    // Keep fully visible while paused or counting down; else fade
+    if (state.paused) {
+      clearTimeout(hudFadeTimer);
+      scrollHud?.classList.remove("sr-faded");
+    } else {
+      scheduleHudFade();
+    }
+  }
+
+  let bubbleIdleTimer = null;
+
+  function scheduleBubbleIdle() {
+    clearTimeout(bubbleIdleTimer);
+    bubble?.classList.remove("sr-idle-hide");
+    // Don't hide while menu/panel open or dragging
+    bubbleIdleTimer = setTimeout(() => {
+      if (menuOpen || ttsPanelOpen) return;
+      if (bubble?.classList.contains("sr-dragging")) return;
+      // only half-hide if docked to edge
+      if (
+        bubble?.classList.contains("sr-docked-left") ||
+        bubble?.classList.contains("sr-docked-right")
+      ) {
+        bubble.classList.add("sr-idle-hide");
+      }
+    }, 2500);
+  }
+
+  function wakeBubble() {
+    bubble?.classList.remove("sr-idle-hide");
+    scheduleBubbleIdle();
+  }
+
   function initBubbleDrag() {
+    bubble?.addEventListener("mouseenter", wakeBubble);
+    bubble?.addEventListener("mouseleave", scheduleBubbleIdle);
+
     let startX, startY, startLeft, startTop;
     let moved = false;
 
@@ -206,12 +368,15 @@
       bubble.style.transition = "";
 
       if (!moved) {
+        // Khôi phục trạng thái dock để bubble vẫn click/hover được như sau khi kéo
+        restoreDockClass();
         toggleMenu();
         return;
       }
 
       dockBubble();
       saveBubblePos();
+      positionScrollHud();
     };
 
     bubble.addEventListener("mousedown", onStart);
@@ -222,6 +387,18 @@
 
     window.addEventListener("mouseup", onEnd);
     window.addEventListener("touchend", onEnd);
+  }
+
+  function restoreDockClass() {
+    if (!bubble) return;
+    const rect = bubble.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    bubble.classList.remove("sr-docked-left", "sr-docked-right");
+    if (centerX < window.innerWidth / 2) {
+      bubble.classList.add("sr-docked-left");
+    } else {
+      bubble.classList.add("sr-docked-right");
+    }
   }
 
   function dockBubble() {
@@ -243,6 +420,7 @@
   }
 
   function saveBubblePos() {
+    positionScrollHud();
     const rect = bubble.getBoundingClientRect();
     localStorage.setItem(
       "sr-bubble-pos",
@@ -257,6 +435,7 @@
   }
 
   function openMenu() {
+    wakeBubble();
     const rect = bubble.getBoundingClientRect();
     const menuWidth = 196;
 
@@ -289,14 +468,70 @@
   }
 
   function closeMenu() {
+    scheduleBubbleIdle();
     menu.classList.remove("sr-open");
     menuOpen = false;
   }
 
   // ===== TTS Panel =====
+  function initPanelSplit() {
+    const split = document.getElementById("sr-panel-split");
+    const settings = document.getElementById("sr-tts-settings");
+    const list = document.getElementById("sr-sentence-list");
+    if (!split || !settings || !list || split.dataset.bound) return;
+    split.dataset.bound = "1";
+
+    let dragging = false;
+
+    const onMove = (e) => {
+      if (!dragging || !ttsPanel) return;
+      const rect = ttsPanel.getBoundingClientRect();
+      const footer = ttsPanel.querySelector(".sr-tts-footer");
+      const header = ttsPanel.querySelector(".sr-tts-header");
+      const footerH = footer ? footer.offsetHeight : 70;
+      const headerH = header ? header.offsetHeight : 48;
+      const splitH = 10;
+      const available = rect.height - headerH - footerH - splitH;
+      const settingsBottom = rect.bottom - footerH;
+      let settingsH = settingsBottom - e.clientY;
+      // list tối thiểu ~80px, settings tối thiểu ~120px
+      settingsH = Math.max(120, Math.min(available - 80, settingsH));
+      // Chỉ đổi viewport height — nội dung bên trong giữ size, cuộn được
+      settings.style.flex = "0 0 auto";
+      settings.style.height = settingsH + "px";
+      settings.style.maxHeight = settingsH + "px";
+      settings.style.minHeight = "120px";
+      settings.style.overflowY = "auto";
+      settings.style.overflowX = "hidden";
+      list.style.flex = "1 1 auto";
+      list.style.minHeight = "80px";
+      list.style.overflowY = "auto";
+    };
+
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      split.classList.remove("sr-dragging");
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    split.addEventListener("mousedown", (e) => {
+      if (!settings.classList.contains("sr-open")) return;
+      dragging = true;
+      e.preventDefault();
+      split.classList.add("sr-dragging");
+      document.body.style.cursor = "ns-resize";
+      document.body.style.userSelect = "none";
+    });
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
   function openTtsPanel(openSettings) {
     ttsPanel.classList.add("sr-open");
     ttsPanelOpen = true;
+    initPanelSplit();
     closeMenu();
     buildSentenceList();
     populateVoices();
@@ -304,7 +539,16 @@
 
     if (openSettings) {
       settingsOpen = true;
-      document.getElementById("sr-tts-settings")?.classList.add("sr-open");
+      const settings = document.getElementById("sr-tts-settings");
+      settings?.classList.add("sr-open");
+      document.getElementById("sr-panel-split")?.classList.add("sr-show");
+      // Chiều cao mặc định ~40% panel — nội dung cuộn bên trong
+      if (settings && ttsPanel && !settings.style.height) {
+        const h = Math.round(ttsPanel.getBoundingClientRect().height * 0.42);
+        settings.style.height = Math.max(160, h) + "px";
+        settings.style.overflowY = "auto";
+        settings.style.overflowX = "hidden";
+      }
     }
   }
 
@@ -320,6 +564,16 @@
     if (!el) return;
     settingsOpen = !settingsOpen;
     el.classList.toggle("sr-open", settingsOpen);
+    const split = document.getElementById("sr-panel-split");
+    if (split) split.classList.toggle("sr-show", settingsOpen);
+    if (settingsOpen && ttsPanel) {
+      if (!el.style.height) {
+        const h = Math.round(ttsPanel.getBoundingClientRect().height * 0.42);
+        el.style.height = Math.max(160, h) + "px";
+      }
+      el.style.overflowY = "auto";
+      el.style.overflowX = "hidden";
+    }
   }
 
   // ===== Sentence List =====
@@ -378,25 +632,60 @@
     const select = document.getElementById("sr-voice-select");
     if (!select || !window.speechSynthesis) return;
 
-    const voices = speechSynthesis.getVoices();
+    const voices = speechSynthesis.getVoices() || [];
+    const prev = select.value;
     select.innerHTML = "";
 
-    const sorted = [...voices].sort((a, b) => {
-      const aVi = a.lang.startsWith("vi") ? 0 : 1;
-      const bVi = b.lang.startsWith("vi") ? 0 : 1;
-      return aVi - bVi || a.name.localeCompare(b.name);
+    function groupOf(v) {
+      const n = (v.name || "").toLowerCase();
+      const lang = (v.lang || "").toLowerCase();
+      if (lang.startsWith("vi")) {
+        if (n.includes("microsoft") || n.includes("hoaimy") || n.includes("namminh") || n.includes(" an"))
+          return "Giọng Microsoft (Việt)";
+        if (n.includes("google")) return "Giọng Google (Việt)";
+        return "Giọng Việt khác";
+      }
+      if (n.includes("microsoft") || n.includes("natural")) return "Microsoft (khác)";
+      if (n.includes("google")) return "Google (khác)";
+      if (lang.startsWith("en")) return "English";
+      return "Giọng trình duyệt khác";
+    }
+
+    const groups = {};
+    voices.forEach((v) => {
+      const g = groupOf(v);
+      (groups[g] = groups[g] || []).push(v);
     });
 
-    sorted.forEach((v) => {
-      const opt = document.createElement("option");
-      opt.value = v.name;
-      opt.textContent = `${v.name} (${v.lang})`;
-      select.appendChild(opt);
+    const order = [
+      "Giọng Microsoft (Việt)",
+      "Giọng Google (Việt)",
+      "Giọng Việt khác",
+      "English",
+      "Microsoft (khác)",
+      "Google (khác)",
+      "Giọng trình duyệt khác",
+    ];
+
+    order.forEach((gName) => {
+      const list = groups[gName];
+      if (!list || !list.length) return;
+      list.sort((a, b) => a.name.localeCompare(b.name));
+      const og = document.createElement("optgroup");
+      og.label = gName;
+      list.forEach((v) => {
+        const opt = document.createElement("option");
+        opt.value = v.voiceURI;
+        opt.textContent = `${v.name} (${v.lang})`;
+        og.appendChild(opt);
+      });
+      select.appendChild(og);
     });
 
-    if (window.StoryTTS?.getCurrentVoiceName) {
-      const current = window.StoryTTS.getCurrentVoiceName();
-      if (current) select.value = current;
+    // note: Bing / Google Cloud / TikTok cần API riêng — chỉ hiện giọng trình duyệt
+    const saved = localStorage.getItem("sr-voice-uri") || prev;
+    if (saved && [...select.options].some((o) => o.value === saved)) {
+      select.value = saved;
     }
   }
 
@@ -405,7 +694,7 @@
     const rate = localStorage.getItem("sr-rate") || "1";
     const pitch = localStorage.getItem("sr-pitch") || "1";
     const context = localStorage.getItem("sr-context") || "2";
-    const scroll = localStorage.getItem("sr-scroll-speed") || "1";
+    const scroll = localStorage.getItem("sr-scroll-px") || "135";
     const hlColor = localStorage.getItem("sr-highlight-color") || "#ffe650";
 
     const rateEl = document.getElementById("sr-rate");
@@ -439,6 +728,13 @@
       applyHighlightColor(hlColor);
     }
 
+    const voiceURI = localStorage.getItem("sr-voice-uri");
+    if (voiceURI) {
+      const sel = document.getElementById("sr-voice-select");
+      if (sel) sel.value = voiceURI;
+      window.StoryTTS?.setVoice?.(voiceURI);
+    }
+
     // Apply to TTS engine
     if (window.StoryTTS) {
       window.StoryTTS.setRate?.(parseFloat(rate));
@@ -458,8 +754,10 @@
     localStorage.setItem("sr-rate", rate);
     localStorage.setItem("sr-pitch", pitch);
     localStorage.setItem("sr-context", context);
-    localStorage.setItem("sr-scroll-speed", scroll);
+    localStorage.setItem("sr-scroll-px", scroll);
     localStorage.setItem("sr-highlight-color", hlColor);
+    const voiceURI = document.getElementById("sr-voice-select")?.value;
+    if (voiceURI) localStorage.setItem("sr-voice-uri", voiceURI);
 
     if (window.StoryTTS) {
       window.StoryTTS.setRate?.(parseFloat(rate));
@@ -514,24 +812,40 @@
         textEl.textContent = autoScrollEnabled
           ? "Tắt auto-scroll"
           : "Auto-scroll";
-
       if (window.StoryTTS) {
-        window.StoryTTS.autoScrollEnabled = autoScrollEnabled;
-        if (autoScrollEnabled) window.StoryTTS.startAutoScroll?.();
-        else window.StoryTTS.stopAutoScroll?.();
+        if (autoScrollEnabled) {
+          window.StoryTTS.startAutoScroll?.();
+          showScrollHud();
+          updateScrollHud({
+            active: true,
+            paused: false,
+            pxPerSec: window.StoryTTS.getScrollPxPerSec?.() || 135,
+            resumeIn: 0,
+          });
+        } else {
+          window.StoryTTS.stopAutoScroll?.();
+          hideScrollHud();
+        }
       }
       updateBubbleActive();
       closeMenu();
     });
 
     document.getElementById("sr-menu-tts")?.addEventListener("click", () => {
-      window.StoryTTS?.togglePlay?.();
-      updateBubbleActive();
       closeMenu();
+      openTtsPanel(false);
+      // start reading if idle; pause/resume if already loaded
+      setTimeout(() => {
+        window.StoryTTS?.togglePlay?.();
+        buildSentenceList();
+        updateBubbleActive();
+      }, 50);
     });
 
     document.getElementById("sr-menu-list")?.addEventListener("click", () => {
       openTtsPanel(false);
+      buildSentenceList();
+      closeMenu();
     });
 
     document
@@ -542,7 +856,7 @@
         if (textEl)
           textEl.textContent = highlightEnabled
             ? "Tắt highlight"
-            : "Highlight";
+            : "Bật highlight";
         if (window.StoryTTS)
           window.StoryTTS.highlightEnabled = highlightEnabled;
         closeMenu();
@@ -565,6 +879,8 @@
       if (textEl) textEl.textContent = "Auto-scroll";
       window.StoryTTS?.stop?.();
       window.StoryTTS?.stopAutoScroll?.();
+      hideScrollHud();
+      syncPlayButton();
       updateBubbleActive();
       closeMenu();
     });
@@ -579,7 +895,11 @@
       .getElementById("sr-panel-play")
       ?.addEventListener("click", () => {
         window.StoryTTS?.togglePlay?.();
-        updateBubbleActive();
+        setTimeout(() => {
+          buildSentenceList();
+          syncPlayButton();
+          updateBubbleActive();
+        }, 150);
       });
     document
       .getElementById("sr-panel-stop")
@@ -606,12 +926,12 @@
       ?.addEventListener("input", (e) => {
         document.getElementById("sr-scroll-speed-val").textContent =
           e.target.value;
-        if (window.StoryTTS)
-          window.StoryTTS.scrollSpeed = parseFloat(e.target.value);
+        window.StoryTTS?.setScrollPxPerSec?.(parseFloat(e.target.value));
       });
     document
       .getElementById("sr-voice-select")
       ?.addEventListener("change", (e) => {
+        localStorage.setItem("sr-voice-uri", e.target.value);
         window.StoryTTS?.setVoice?.(e.target.value);
       });
     document
@@ -643,6 +963,49 @@
     if (window.speechSynthesis) {
       speechSynthesis.onvoiceschanged = populateVoices;
     }
+
+    // Kagane-like: user wheel/touch temporarily pauses continuous scroll
+    let userScrollQuiet = null;
+    const onUserScrollIntent = () => {
+      if (!autoScrollEnabled) return;
+      if (!window.StoryTTS?.isScrollPaused?.()) {
+        window.StoryTTS?.pauseAutoScroll?.(0);
+      }
+      clearTimeout(userScrollQuiet);
+      userScrollQuiet = setTimeout(() => {
+        if (autoScrollEnabled && window.StoryTTS?.isScrollPaused?.()) {
+          window.StoryTTS?.pauseAutoScroll?.(2); // show Resumes in 2s then continue
+          // actually schedule resume
+          setTimeout(() => {
+            if (autoScrollEnabled) window.StoryTTS?.resumeAutoScroll?.();
+          }, 2000);
+        }
+      }, 400);
+    };
+    window.addEventListener("wheel", onUserScrollIntent, { passive: true });
+    window.addEventListener("touchmove", onUserScrollIntent, { passive: true });
+  }
+
+  function syncPlayButton() {
+    const playing = !!window.StoryTTS?.isPlaying?.();
+    const btn = document.getElementById("sr-panel-play");
+    if (btn) {
+      if (playing) {
+        btn.textContent = "⏸";
+        btn.title = "Tạm dừng";
+        btn.classList.add("sr-playing");
+      } else {
+        btn.textContent = "▶";
+        btn.title = "Nghe TTS";
+        btn.classList.remove("sr-playing");
+      }
+    }
+    // Menu item
+    const menuTts = document.querySelector("#sr-menu-tts span:last-child");
+    const menuIcon = document.querySelector("#sr-menu-tts .sr-icon");
+    if (menuTts) menuTts.textContent = playing ? "Tạm dừng" : "Nghe TTS";
+    if (menuIcon) menuIcon.textContent = playing ? "⏸" : "▶";
+    document.getElementById("sr-menu-tts")?.classList.toggle("sr-active-item", playing);
   }
 
   function updateBubbleActive() {
@@ -662,6 +1025,7 @@
     updateProgress,
     setPlaying(isPlaying) {
       bubble?.classList.toggle("sr-active", !!isPlaying || autoScrollEnabled);
+      syncPlayButton();
     },
     setScrolling(isScrolling) {
       autoScrollEnabled = isScrolling;
@@ -672,23 +1036,80 @@
           : "Auto-scroll";
       updateBubbleActive();
     },
+    onScrollState(state) {
+      updateScrollHud(state);
+      if (state && state.active) {
+        autoScrollEnabled = true;
+        const textEl = document.getElementById("sr-menu-scroll-text");
+        if (textEl) textEl.textContent = "Tắt auto-scroll";
+      } else if (state && !state.active) {
+        autoScrollEnabled = false;
+        const textEl = document.getElementById("sr-menu-scroll-text");
+        if (textEl) textEl.textContent = "Auto-scroll";
+      }
+      updateBubbleActive();
+    },
   };
+
+  function showToolbar() {
+    toolbarVisible = true;
+    createUI();
+    if (!bubble) bubble = document.getElementById("sr-bubble");
+    if (!menu) menu = document.getElementById("sr-menu");
+    if (menu) menu.style.display = "";
+    if (bubble) {
+      bubble.style.display = "flex";
+      bubble.classList.remove("sr-idle-hide");
+      if (!localStorage.getItem("sr-bubble-pos")) {
+        bubble.style.right = "12px";
+        bubble.style.bottom = "100px";
+        bubble.style.left = "auto";
+        bubble.style.top = "auto";
+        dockBubble();
+      } else {
+        restoreDockClass();
+      }
+      wakeBubble();
+    }
+    if (bubble && !bubble.dataset.srDragBound) {
+      initBubbleDrag();
+      bubble.dataset.srDragBound = "1";
+    }
+  }
+
+  function hideToolbar() {
+    toolbarVisible = false;
+    closeMenu();
+    closeTtsPanel();
+    window.StoryTTS?.stop?.();
+    window.StoryTTS?.stopAutoScroll?.();
+    hideScrollHud();
+    if (bubble) bubble.style.display = "none";
+    if (menu) menu.style.display = "none";
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || !msg.type) return;
+    if (msg.type === "SHOW_TOOLBAR") {
+      showToolbar();
+      sendResponse?.({ ok: true });
+    } else if (msg.type === "HIDE_TOOLBAR") {
+      hideToolbar();
+      sendResponse?.({ ok: true });
+    }
+    return true;
+  });
 
   // ===== Init =====
   function init() {
-    createUI();
-    initBubbleDrag();
+    createUI(); // bubble display:none cho đến khi popup bật
+    // Không bind drag / không hiện bubble — chờ SHOW_TOOLBAR
     bindEvents();
     loadTheme();
     loadSettingsUI();
 
-    setTimeout(() => {
-      if (!localStorage.getItem("sr-bubble-pos")) {
-        dockBubble();
-      }
-    }, 100);
-
-    console.log("[Story Reader] UI loaded (cyberpunk / Ejoy style)");
+    // Nếu user đã từng bật trong session này (optional: không auto)
+    console.log("[Story Reader] UI ready — chờ popup Bắt đầu đọc");
   }
 
   if (document.readyState === "loading") {
