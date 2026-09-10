@@ -11,6 +11,10 @@
   let ttsPanelOpen = false;
   let settingsOpen = false;
   let highlightEnabled = true;
+  function syncHighlightLabel() {
+    const textEl = document.getElementById("sr-menu-highlight-text");
+    if (textEl) textEl.textContent = highlightEnabled ? "Tắt highlight" : "Highlight";
+  }
   let autoScrollEnabled = false;
   let toolbarVisible = false;
   let currentTheme = "dark";
@@ -69,7 +73,7 @@
         <div class="sr-divider"></div>
         <button type="button" id="sr-menu-highlight">
           <span class="sr-icon">✎</span>
-          <span id="sr-menu-highlight-text">Tắt highlight</span>
+          <span id="sr-menu-highlight-text">Highlight</span>
         </button>
         <button type="button" id="sr-menu-theme">
           <span class="sr-icon">◐</span>
@@ -85,6 +89,7 @@
         </button>
       `;
       document.body.appendChild(menu);
+      syncHighlightLabel();
     } else {
       menu = document.getElementById("sr-menu");
     }
@@ -96,7 +101,7 @@
       ttsPanel.innerHTML = `
         <div class="sr-tts-header">
           <span>Danh sách câu</span>
-          <button type="button" id="sr-tts-toggle-settings" title="Cài đặt giọng" title="Cài đặt giọng">⚙</button>
+          <button type="button" id="sr-tts-toggle-settings" title="Cài đặt giọng">⚙</button>
           <button type="button" id="sr-tts-close" title="Đóng">✕</button>
         </div>
         <div id="sr-sentence-list"></div>
@@ -211,18 +216,22 @@
   function positionScrollHud() {
     if (!scrollHud || !bubble) return;
     const br = bubble.getBoundingClientRect();
-    const hudW = 48;
-    const gap = 10;
-    // Place above bubble, aligned to same edge
+    const hudW = 52;
+    const gap = 12; // khoảng cách với bubble
+    const edgePad = 16; // không sát mép màn hình
+    const hudH = scrollHud.offsetHeight || 168;
+
+    // Căn giữa theo bubble, phía TRÊN
     let left = br.left + (br.width - hudW) / 2;
-    left = Math.max(6, Math.min(left, window.innerWidth - hudW - 6));
-    // Measure hud height after visible
-    const hudH = scrollHud.offsetHeight || 160;
+    left = Math.max(edgePad, Math.min(left, window.innerWidth - hudW - edgePad));
+
     let top = br.top - hudH - gap;
-    if (top < 8) {
-      // if not enough space above, put below bubble
+    if (top < edgePad) {
+      // không đủ chỗ phía trên → đặt dưới bubble
       top = br.bottom + gap;
     }
+    top = Math.max(edgePad, Math.min(top, window.innerHeight - hudH - edgePad));
+
     scrollHud.style.left = left + "px";
     scrollHud.style.top = top + "px";
     scrollHud.style.right = "auto";
@@ -238,7 +247,11 @@
   }
 
   function hideScrollHud() {
-    scrollHud?.classList.remove("sr-visible");
+    clearTimeout(hudFadeTimer);
+    if (scrollHud) {
+      scrollHud.classList.remove("sr-visible", "sr-faded");
+      scrollHud.style.opacity = "";
+    }
     scrollHudVisible = false;
   }
 
@@ -249,7 +262,7 @@
     scrollHud?.classList.remove("sr-faded");
     hudFadeTimer = setTimeout(() => {
       if (scrollHudVisible && scrollHud) scrollHud.classList.add("sr-faded");
-    }, 1800);
+    }, 2000);
   }
 
   function updateScrollHud(state) {
@@ -566,6 +579,7 @@
     el.classList.toggle("sr-open", settingsOpen);
     const split = document.getElementById("sr-panel-split");
     if (split) split.classList.toggle("sr-show", settingsOpen);
+    document.getElementById("sr-tts-toggle-settings")?.classList.toggle("sr-on", settingsOpen);
     if (settingsOpen && ttsPanel) {
       if (!el.style.height) {
         const h = Math.round(ttsPanel.getBoundingClientRect().height * 0.42);
@@ -676,7 +690,18 @@
       list.forEach((v) => {
         const opt = document.createElement("option");
         opt.value = v.voiceURI;
-        opt.textContent = `${v.name} (${v.lang})`;
+        // Gọn label: bỏ phần dài trong ngoặc nếu tên đã đủ
+        let label = v.name || v.voiceURI;
+        // Gọn: bỏ "Microsoft " prefix dài nếu có
+        label = label.replace(/^Microsoft\s+/i, "");
+        if (label.length > 28) label = label.slice(0, 26) + "…";
+        if (v.lang) {
+          const shortLang = (v.lang || "").split("-")[0];
+          if (shortLang && !label.toLowerCase().includes(shortLang.toLowerCase())) {
+            label += " · " + shortLang;
+          }
+        }
+        opt.textContent = label;
         og.appendChild(opt);
       });
       select.appendChild(og);
@@ -833,8 +858,15 @@
 
     document.getElementById("sr-menu-tts")?.addEventListener("click", () => {
       closeMenu();
+      // Đang auto-scroll → tắt khi bắt đầu nghe
+      if (autoScrollEnabled) {
+        autoScrollEnabled = false;
+        window.StoryTTS?.stopAutoScroll?.();
+        hideScrollHud();
+        const textEl = document.getElementById("sr-menu-scroll-text");
+        if (textEl) textEl.textContent = "Auto-scroll";
+      }
       openTtsPanel(false);
-      // start reading if idle; pause/resume if already loaded
       setTimeout(() => {
         window.StoryTTS?.togglePlay?.();
         buildSentenceList();
@@ -894,6 +926,14 @@
     document
       .getElementById("sr-panel-play")
       ?.addEventListener("click", () => {
+        // Bật nghe → tắt auto-scroll
+        if (autoScrollEnabled && !window.StoryTTS?.isPlaying?.()) {
+          autoScrollEnabled = false;
+          window.StoryTTS?.stopAutoScroll?.();
+          hideScrollHud();
+          const textEl = document.getElementById("sr-menu-scroll-text");
+          if (textEl) textEl.textContent = "Auto-scroll";
+        }
         window.StoryTTS?.togglePlay?.();
         setTimeout(() => {
           buildSentenceList();
@@ -1037,15 +1077,16 @@
       updateBubbleActive();
     },
     onScrollState(state) {
-      updateScrollHud(state);
       if (state && state.active) {
         autoScrollEnabled = true;
         const textEl = document.getElementById("sr-menu-scroll-text");
         if (textEl) textEl.textContent = "Tắt auto-scroll";
-      } else if (state && !state.active) {
+        updateScrollHud(state);
+      } else {
         autoScrollEnabled = false;
         const textEl = document.getElementById("sr-menu-scroll-text");
         if (textEl) textEl.textContent = "Auto-scroll";
+        hideScrollHud();
       }
       updateBubbleActive();
     },

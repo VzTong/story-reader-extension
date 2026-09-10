@@ -266,6 +266,10 @@
 
     isSpeaking = true;
     window.StoryReaderUI?.setPlaying?.(true);
+    // TTS đang chạy → tắt auto-scroll liên tục nếu có
+    if (autoScrollEnabled) {
+      stopAutoScroll();
+    }
     highlightAndScroll(currentIndex);
 
     const text = currentUtterances[currentIndex];
