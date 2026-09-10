@@ -146,13 +146,13 @@
             </div>
           </div>
 
-          <button type="button" class="sr-save-btn" id="sr-save-settings">Lưu cài đặt</button>
+          <div role="button" tabindex="0" class="sr-save-btn" id="sr-save-settings">Lưu cài đặt</div>
         </div>
         <div class="sr-tts-footer">
           <div class="sr-tts-progress" id="sr-progress">0 / 0</div>
           <div class="sr-tts-controls">
-            <button type="button" id="sr-panel-stop" title="Stop">■</button>
-            <button type="button" id="sr-panel-play" class="play" title="Play TTS">▶</button>
+            <div role="button" tabindex="0" class="sr-ctrl" id="sr-panel-stop" title="Dừng">■</div>
+            <div role="button" tabindex="0" class="sr-ctrl play" id="sr-panel-play" title="Nghe TTS">▶</div>
           </div>
         </div>
       `;
@@ -451,19 +451,25 @@
     wakeBubble();
     const rect = bubble.getBoundingClientRect();
     const menuWidth = 196;
+    const edge = 24; // cách mép màn hình
+    const gap = 14; // cách bubble
 
     let left = rect.left + rect.width / 2 - menuWidth / 2;
-    if (left < 8) left = 8;
-    if (left + menuWidth > window.innerWidth - 8) {
-      left = window.innerWidth - menuWidth - 8;
+    // Nếu bubble sát cạnh phải → neo menu lệch vào trong
+    if (rect.right > window.innerWidth - 40) {
+      left = Math.min(left, window.innerWidth - menuWidth - edge);
     }
+    if (rect.left < 40) {
+      left = Math.max(left, edge);
+    }
+    left = Math.max(edge, Math.min(left, window.innerWidth - menuWidth - edge));
 
     if (rect.top > 240) {
-      menu.style.top = rect.top - 8 + "px";
+      menu.style.top = rect.top - gap + "px";
       menu.style.transformOrigin = "bottom center";
       menu.style.transform = "translateY(-100%) scale(0.95)";
     } else {
-      menu.style.top = rect.bottom + 8 + "px";
+      menu.style.top = rect.bottom + gap + "px";
       menu.style.transformOrigin = "top center";
       menu.style.transform = "scale(0.95)";
     }
@@ -941,11 +947,31 @@
           updateBubbleActive();
         }, 150);
       });
-    document
-      .getElementById("sr-panel-stop")
+
+    // role=button keyboard
+    ["sr-panel-stop", "sr-panel-play", "sr-save-settings"].forEach((id) => {
+      document.getElementById(id)?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.currentTarget.click();
+        }
+      });
+    });
+
+    document.getElementById("sr-panel-stop")
       ?.addEventListener("click", () => {
         window.StoryTTS?.stop?.();
+        syncPlayButton();
         updateBubbleActive();
+        if (window.StoryReaderUI?.updateProgress) {
+          /* progress via UI */
+        }
+        // Force UI progress text
+        const prog = document.querySelector(".sr-tts-progress");
+        if (prog) {
+          const total = window.StoryTTS?.getSentences?.()?.length || 0;
+          prog.textContent = "0 / " + total;
+        }
       });
 
     document.getElementById("sr-rate")?.addEventListener("input", (e) => {
@@ -1004,23 +1030,16 @@
       speechSynthesis.onvoiceschanged = populateVoices;
     }
 
-    // Kagane-like: user wheel/touch temporarily pauses continuous scroll
-    let userScrollQuiet = null;
+    // Kagane-like: lướt chuột/touch → tạm dừng, ~2s sau tự cuộn tiếp
+    let userScrollTimer = null;
     const onUserScrollIntent = () => {
       if (!autoScrollEnabled) return;
-      if (!window.StoryTTS?.isScrollPaused?.()) {
-        window.StoryTTS?.pauseAutoScroll?.(0);
-      }
-      clearTimeout(userScrollQuiet);
-      userScrollQuiet = setTimeout(() => {
-        if (autoScrollEnabled && window.StoryTTS?.isScrollPaused?.()) {
-          window.StoryTTS?.pauseAutoScroll?.(2); // show Resumes in 2s then continue
-          // actually schedule resume
-          setTimeout(() => {
-            if (autoScrollEnabled) window.StoryTTS?.resumeAutoScroll?.();
-          }, 2000);
-        }
-      }, 400);
+      // Mỗi lần lướt: pause + đếm lại 2s rồi resume
+      window.StoryTTS?.pauseAutoScroll?.(2);
+      clearTimeout(userScrollTimer);
+      userScrollTimer = setTimeout(() => {
+        if (autoScrollEnabled) window.StoryTTS?.resumeAutoScroll?.();
+      }, 2000);
     };
     window.addEventListener("wheel", onUserScrollIntent, { passive: true });
     window.addEventListener("touchmove", onUserScrollIntent, { passive: true });

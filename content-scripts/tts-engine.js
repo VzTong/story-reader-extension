@@ -409,14 +409,14 @@
   }
 
   function stop() {
-    isPaused = true;
+    isPaused = false;
     isSpeaking = false;
     try {
       speechSynthesis.cancel();
     } catch (e) {}
     currentIndex = 0;
     clearPageHighlight();
-    unwrapSentences();
+    // keep sentence wraps so list still works; only clear highlight
     window.StoryReaderUI?.setPlaying?.(false);
     if (window.StoryReaderUI?.updateProgress) {
       window.StoryReaderUI.updateProgress();
