@@ -1,4 +1,4 @@
-// ===== Story Reader – Floating Bubble (Ejoy style) =====
+// ===== Story Reader – Floating Bubble (Ejoy + Cyberpunk) =====
 
 (function () {
   "use strict";
@@ -7,8 +7,6 @@
   let menu = null;
   let ttsPanel = null;
   let isDragging = false;
-  let dragOffsetX = 0;
-  let dragOffsetY = 0;
   let menuOpen = false;
   let ttsPanelOpen = false;
   let settingsOpen = false;
@@ -24,7 +22,6 @@
       bubble.id = "sr-bubble";
       bubble.title = "Story Reader";
 
-      // Dùng icon thật của extension
       const img = document.createElement("img");
       img.src = chrome.runtime.getURL("icons/icon128.png");
       img.alt = "Story Reader";
@@ -32,12 +29,16 @@
 
       document.body.appendChild(bubble);
 
-      // Vị trí mặc định
       const saved = localStorage.getItem("sr-bubble-pos");
       if (saved) {
-        const pos = JSON.parse(saved);
-        bubble.style.left = pos.left + "px";
-        bubble.style.top = pos.top + "px";
+        try {
+          const pos = JSON.parse(saved);
+          bubble.style.left = pos.left + "px";
+          bubble.style.top = pos.top + "px";
+        } catch (_) {
+          bubble.style.right = "16px";
+          bubble.style.bottom = "120px";
+        }
       } else {
         bubble.style.right = "16px";
         bubble.style.bottom = "120px";
@@ -45,35 +46,39 @@
     } else {
       bubble = document.getElementById("sr-bubble");
     }
-    
-    // Mini Menu
+
+    // Mini Menu — đúng thứ tự SPEC
     if (!document.getElementById("sr-menu")) {
       menu = document.createElement("div");
       menu.id = "sr-menu";
       menu.innerHTML = `
-        <button id="sr-menu-scroll">
+        <button type="button" id="sr-menu-scroll">
           <span class="sr-icon">↕</span>
-          <span id="sr-menu-scroll-text">Bật Auto-scroll</span>
+          <span id="sr-menu-scroll-text">Auto-scroll</span>
         </button>
-        <button id="sr-menu-tts">
-          <span class="sr-icon">🔊</span>
+        <button type="button" id="sr-menu-tts">
+          <span class="sr-icon">▶</span>
           <span>Nghe TTS</span>
         </button>
-        <button id="sr-menu-list">
+        <button type="button" id="sr-menu-list">
           <span class="sr-icon">☰</span>
           <span>Danh sách câu</span>
         </button>
         <div class="sr-divider"></div>
-        <button id="sr-menu-highlight">
-          <span class="sr-icon">✏️</span>
-          <span id="sr-menu-highlight-text">Tắt Highlight</span>
+        <button type="button" id="sr-menu-highlight">
+          <span class="sr-icon">✎</span>
+          <span id="sr-menu-highlight-text">Highlight</span>
         </button>
-        <button id="sr-menu-theme">
-          <span class="sr-icon">🌓</span>
-          <span>Đổi Theme</span>
+        <button type="button" id="sr-menu-theme">
+          <span class="sr-icon">◐</span>
+          <span>Đổi theme</span>
         </button>
-        <button id="sr-menu-stop">
-          <span class="sr-icon">⏹</span>
+        <button type="button" id="sr-menu-setting">
+          <span class="sr-icon">⚙</span>
+          <span>Cài đặt</span>
+        </button>
+        <button type="button" id="sr-menu-stop" class="sr-danger">
+          <span class="sr-icon">■</span>
           <span>Dừng tất cả</span>
         </button>
       `;
@@ -89,28 +94,57 @@
       ttsPanel.innerHTML = `
         <div class="sr-tts-header">
           <span>Danh sách câu</span>
-          <button id="sr-tts-toggle-settings" title="Cài đặt giọng">⚙️</button>
-          <button id="sr-tts-close" title="Đóng">✕</button>
+          <button type="button" id="sr-tts-toggle-settings" title="Cài đặt giọng">⚙</button>
+          <button type="button" id="sr-tts-close" title="Đóng">✕</button>
         </div>
         <div id="sr-sentence-list"></div>
         <div class="sr-tts-settings" id="sr-tts-settings">
-          <label>Giọng đọc</label>
-          <select id="sr-voice-select"></select>
+          <div class="sr-set-group">
+            <div class="sr-set-title">Giọng nói</div>
+            <select id="sr-voice-select"></select>
+          </div>
 
-          <label>Tốc độ đọc: <span id="sr-rate-val">1.0</span></label>
-          <input type="range" id="sr-rate" min="0.5" max="2" step="0.1" value="1">
+          <div class="sr-set-group">
+            <div class="sr-set-title">Âm thanh</div>
+            <div class="sr-slider-row">
+              <span class="sr-slider-label">Tốc độ đọc</span>
+              <input type="range" id="sr-rate" min="0.5" max="2" step="0.1" value="1">
+              <span class="sr-val" id="sr-rate-val">1.0</span>
+            </div>
+            <div class="sr-slider-row">
+              <span class="sr-slider-label">Độ cao giọng</span>
+              <input type="range" id="sr-pitch" min="0.5" max="1.5" step="0.1" value="1">
+              <span class="sr-val" id="sr-pitch-val">1.0</span>
+            </div>
+            <div class="sr-slider-row">
+              <span class="sr-slider-label">Ngữ cảnh</span>
+              <input type="range" id="sr-context" min="0" max="4" step="1" value="2">
+              <span class="sr-val" id="sr-context-val">2</span>
+            </div>
+            <div class="sr-slider-row">
+              <span class="sr-slider-label">Tốc độ cuộn</span>
+              <input type="range" id="sr-scroll-speed" min="0.3" max="3" step="0.1" value="1">
+              <span class="sr-val" id="sr-scroll-speed-val">1.0</span>
+            </div>
+          </div>
 
-          <label>Tốc độ cuộn: <span id="sr-scroll-speed-val">1.0</span></label>
-          <input type="range" id="sr-scroll-speed" min="0.3" max="3" step="0.1" value="1">
+          <div class="sr-set-group">
+            <div class="sr-set-title">Giao diện</div>
+            <div class="sr-color-row">
+              <span class="sr-slider-label">Màu tô văn bản</span>
+              <label class="sr-color-swatch" for="sr-highlight-color">
+                <input type="color" id="sr-highlight-color" value="#ffe650">
+              </label>
+            </div>
+          </div>
 
-          <label>Pitch: <span id="sr-pitch-val">1.0</span></label>
-          <input type="range" id="sr-pitch" min="0.5" max="1.5" step="0.1" value="1">
+          <button type="button" class="sr-save-btn" id="sr-save-settings">Lưu cài đặt</button>
         </div>
         <div class="sr-tts-footer">
           <div class="sr-tts-progress" id="sr-progress">0 / 0</div>
           <div class="sr-tts-controls">
-            <button id="sr-panel-stop" title="Stop">⏹</button>
-            <button id="sr-panel-play" class="play" title="Play TTS">▶</button>
+            <button type="button" id="sr-panel-stop" title="Stop">■</button>
+            <button type="button" id="sr-panel-play" class="play" title="Play TTS">▶</button>
           </div>
         </div>
       `;
@@ -139,7 +173,6 @@
       startLeft = rect.left;
       startTop = rect.top;
 
-      // Clear dock class while dragging
       bubble.classList.remove("sr-docked-left", "sr-docked-right");
     };
 
@@ -158,9 +191,8 @@
       let newLeft = startLeft + dx;
       let newTop = startTop + dy;
 
-      // Giới hạn trong màn hình
-      newLeft = Math.max(0, Math.min(window.innerWidth - 48, newLeft));
-      newTop = Math.max(0, Math.min(window.innerHeight - 48, newTop));
+      newLeft = Math.max(0, Math.min(window.innerWidth - 44, newLeft));
+      newTop = Math.max(0, Math.min(window.innerHeight - 44, newTop));
 
       bubble.style.left = newLeft + "px";
       bubble.style.top = newTop + "px";
@@ -174,12 +206,10 @@
       bubble.style.transition = "";
 
       if (!moved) {
-        // Đây là click → mở menu
         toggleMenu();
         return;
       }
 
-      // Dock vào cạnh gần nhất
       dockBubble();
       saveBubblePos();
     };
@@ -216,37 +246,27 @@
     const rect = bubble.getBoundingClientRect();
     localStorage.setItem(
       "sr-bubble-pos",
-      JSON.stringify({
-        left: rect.left,
-        top: rect.top,
-      }),
+      JSON.stringify({ left: rect.left, top: rect.top })
     );
   }
 
   // ===== Menu =====
   function toggleMenu() {
-    if (menuOpen) {
-      closeMenu();
-    } else {
-      openMenu();
-    }
+    if (menuOpen) closeMenu();
+    else openMenu();
   }
 
   function openMenu() {
     const rect = bubble.getBoundingClientRect();
-    const menuWidth = 190;
+    const menuWidth = 196;
 
     let left = rect.left + rect.width / 2 - menuWidth / 2;
-    let top = rect.top - 10;
-
-    // Điều chỉnh nếu tràn màn hình
     if (left < 8) left = 8;
     if (left + menuWidth > window.innerWidth - 8) {
       left = window.innerWidth - menuWidth - 8;
     }
 
-    // Hiện phía trên hoặc dưới
-    if (rect.top > 220) {
+    if (rect.top > 240) {
       menu.style.top = rect.top - 8 + "px";
       menu.style.transformOrigin = "bottom center";
       menu.style.transform = "translateY(-100%) scale(0.95)";
@@ -260,11 +280,10 @@
     menu.classList.add("sr-open");
     menuOpen = true;
 
-    // Force reflow rồi animate
     requestAnimationFrame(() => {
       menu.style.transform = menu.style.transform.replace(
         "scale(0.95)",
-        "scale(1)",
+        "scale(1)"
       );
     });
   }
@@ -275,12 +294,18 @@
   }
 
   // ===== TTS Panel =====
-  function openTtsPanel() {
+  function openTtsPanel(openSettings) {
     ttsPanel.classList.add("sr-open");
     ttsPanelOpen = true;
     closeMenu();
     buildSentenceList();
     populateVoices();
+    loadSettingsUI();
+
+    if (openSettings) {
+      settingsOpen = true;
+      document.getElementById("sr-tts-settings")?.classList.add("sr-open");
+    }
   }
 
   function closeTtsPanel() {
@@ -300,10 +325,19 @@
   // ===== Sentence List =====
   function buildSentenceList() {
     const list = document.getElementById("sr-sentence-list");
-    if (!list || !window.StoryTTS) return;
+    if (!list) return;
 
-    const sentences = window.StoryTTS.getSentences?.() || [];
+    const sentences = window.StoryTTS?.getSentences?.() || [];
     list.innerHTML = "";
+
+    if (!sentences.length) {
+      const empty = document.createElement("div");
+      empty.className = "sr-empty";
+      empty.textContent = "Chưa có nội dung. Bấm Nghe TTS trên trang truyện để bắt đầu.";
+      list.appendChild(empty);
+      updateProgress();
+      return;
+    }
 
     sentences.forEach((s, i) => {
       const item = document.createElement("div");
@@ -311,8 +345,9 @@
       item.dataset.index = i;
       item.innerHTML = `
         <span class="sr-idx">${i + 1}</span>
-        <span class="sr-text">${s}</span>
+        <span class="sr-text"></span>
       `;
+      item.querySelector(".sr-text").textContent = s;
       item.addEventListener("click", () => {
         window.StoryTTS?.jumpTo?.(i);
       });
@@ -365,6 +400,98 @@
     }
   }
 
+  // ===== Settings persistence =====
+  function loadSettingsUI() {
+    const rate = localStorage.getItem("sr-rate") || "1";
+    const pitch = localStorage.getItem("sr-pitch") || "1";
+    const context = localStorage.getItem("sr-context") || "2";
+    const scroll = localStorage.getItem("sr-scroll-speed") || "1";
+    const hlColor = localStorage.getItem("sr-highlight-color") || "#ffe650";
+
+    const rateEl = document.getElementById("sr-rate");
+    const pitchEl = document.getElementById("sr-pitch");
+    const contextEl = document.getElementById("sr-context");
+    const scrollEl = document.getElementById("sr-scroll-speed");
+    const colorEl = document.getElementById("sr-highlight-color");
+
+    if (rateEl) {
+      rateEl.value = rate;
+      const v = document.getElementById("sr-rate-val");
+      if (v) v.textContent = rate;
+    }
+    if (pitchEl) {
+      pitchEl.value = pitch;
+      const v = document.getElementById("sr-pitch-val");
+      if (v) v.textContent = pitch;
+    }
+    if (contextEl) {
+      contextEl.value = context;
+      const v = document.getElementById("sr-context-val");
+      if (v) v.textContent = context;
+    }
+    if (scrollEl) {
+      scrollEl.value = scroll;
+      const v = document.getElementById("sr-scroll-speed-val");
+      if (v) v.textContent = scroll;
+    }
+    if (colorEl) {
+      colorEl.value = hlColor;
+      applyHighlightColor(hlColor);
+    }
+
+    // Apply to TTS engine
+    if (window.StoryTTS) {
+      window.StoryTTS.setRate?.(parseFloat(rate));
+      window.StoryTTS.setPitch?.(parseFloat(pitch));
+      window.StoryTTS.contextLevel = parseInt(context, 10);
+      window.StoryTTS.scrollSpeed = parseFloat(scroll);
+    }
+  }
+
+  function saveSettings() {
+    const rate = document.getElementById("sr-rate")?.value || "1";
+    const pitch = document.getElementById("sr-pitch")?.value || "1";
+    const context = document.getElementById("sr-context")?.value || "2";
+    const scroll = document.getElementById("sr-scroll-speed")?.value || "1";
+    const hlColor = document.getElementById("sr-highlight-color")?.value || "#ffe650";
+
+    localStorage.setItem("sr-rate", rate);
+    localStorage.setItem("sr-pitch", pitch);
+    localStorage.setItem("sr-context", context);
+    localStorage.setItem("sr-scroll-speed", scroll);
+    localStorage.setItem("sr-highlight-color", hlColor);
+
+    if (window.StoryTTS) {
+      window.StoryTTS.setRate?.(parseFloat(rate));
+      window.StoryTTS.setPitch?.(parseFloat(pitch));
+      window.StoryTTS.contextLevel = parseInt(context, 10);
+      window.StoryTTS.scrollSpeed = parseFloat(scroll);
+    }
+    applyHighlightColor(hlColor);
+
+    const btn = document.getElementById("sr-save-settings");
+    if (btn) {
+      const prev = btn.textContent;
+      btn.textContent = "Đã lưu ✓";
+      btn.classList.add("sr-saved");
+      setTimeout(() => {
+        btn.textContent = prev;
+        btn.classList.remove("sr-saved");
+      }, 1400);
+    }
+  }
+
+  function applyHighlightColor(hex) {
+    // Convert #RRGGBB → rgba with alpha ~0.42
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    document.documentElement.style.setProperty(
+      "--sr-highlight",
+      `rgba(${r}, ${g}, ${b}, 0.42)`
+    );
+  }
+
   // ===== Theme =====
   function toggleTheme() {
     currentTheme = currentTheme === "dark" ? "light" : "dark";
@@ -380,33 +507,31 @@
 
   // ===== Events =====
   function bindEvents() {
-    // Menu buttons
     document.getElementById("sr-menu-scroll")?.addEventListener("click", () => {
       autoScrollEnabled = !autoScrollEnabled;
       const textEl = document.getElementById("sr-menu-scroll-text");
       if (textEl)
         textEl.textContent = autoScrollEnabled
-          ? "Tắt Auto-scroll"
-          : "Bật Auto-scroll";
+          ? "Tắt auto-scroll"
+          : "Auto-scroll";
 
       if (window.StoryTTS) {
         window.StoryTTS.autoScrollEnabled = autoScrollEnabled;
-        if (autoScrollEnabled) {
-          window.StoryTTS.startAutoScroll?.();
-        } else {
-          window.StoryTTS.stopAutoScroll?.();
-        }
+        if (autoScrollEnabled) window.StoryTTS.startAutoScroll?.();
+        else window.StoryTTS.stopAutoScroll?.();
       }
+      updateBubbleActive();
       closeMenu();
     });
 
     document.getElementById("sr-menu-tts")?.addEventListener("click", () => {
       window.StoryTTS?.togglePlay?.();
+      updateBubbleActive();
       closeMenu();
     });
 
     document.getElementById("sr-menu-list")?.addEventListener("click", () => {
-      openTtsPanel();
+      openTtsPanel(false);
     });
 
     document
@@ -416,8 +541,8 @@
         const textEl = document.getElementById("sr-menu-highlight-text");
         if (textEl)
           textEl.textContent = highlightEnabled
-            ? "Tắt Highlight"
-            : "Bật Highlight";
+            ? "Tắt highlight"
+            : "Highlight";
         if (window.StoryTTS)
           window.StoryTTS.highlightEnabled = highlightEnabled;
         closeMenu();
@@ -428,16 +553,22 @@
       closeMenu();
     });
 
+    document
+      .getElementById("sr-menu-setting")
+      ?.addEventListener("click", () => {
+        openTtsPanel(true);
+      });
+
     document.getElementById("sr-menu-stop")?.addEventListener("click", () => {
       autoScrollEnabled = false;
       const textEl = document.getElementById("sr-menu-scroll-text");
-      if (textEl) textEl.textContent = "Bật Auto-scroll";
+      if (textEl) textEl.textContent = "Auto-scroll";
       window.StoryTTS?.stop?.();
       window.StoryTTS?.stopAutoScroll?.();
+      updateBubbleActive();
       closeMenu();
     });
 
-    // TTS Panel
     document
       .getElementById("sr-tts-close")
       ?.addEventListener("click", closeTtsPanel);
@@ -446,12 +577,17 @@
       ?.addEventListener("click", toggleTtsSettings);
     document
       .getElementById("sr-panel-play")
-      ?.addEventListener("click", () => window.StoryTTS?.togglePlay?.());
+      ?.addEventListener("click", () => {
+        window.StoryTTS?.togglePlay?.();
+        updateBubbleActive();
+      });
     document
       .getElementById("sr-panel-stop")
-      ?.addEventListener("click", () => window.StoryTTS?.stop?.());
+      ?.addEventListener("click", () => {
+        window.StoryTTS?.stop?.();
+        updateBubbleActive();
+      });
 
-    // Settings live update
     document.getElementById("sr-rate")?.addEventListener("input", (e) => {
       document.getElementById("sr-rate-val").textContent = e.target.value;
       window.StoryTTS?.setRate?.(parseFloat(e.target.value));
@@ -459,6 +595,11 @@
     document.getElementById("sr-pitch")?.addEventListener("input", (e) => {
       document.getElementById("sr-pitch-val").textContent = e.target.value;
       window.StoryTTS?.setPitch?.(parseFloat(e.target.value));
+    });
+    document.getElementById("sr-context")?.addEventListener("input", (e) => {
+      document.getElementById("sr-context-val").textContent = e.target.value;
+      if (window.StoryTTS)
+        window.StoryTTS.contextLevel = parseInt(e.target.value, 10);
     });
     document
       .getElementById("sr-scroll-speed")
@@ -473,15 +614,25 @@
       ?.addEventListener("change", (e) => {
         window.StoryTTS?.setVoice?.(e.target.value);
       });
+    document
+      .getElementById("sr-highlight-color")
+      ?.addEventListener("input", (e) => {
+        applyHighlightColor(e.target.value);
+      });
+    document
+      .getElementById("sr-save-settings")
+      ?.addEventListener("click", saveSettings);
 
-    // Click outside to close menu
     document.addEventListener("click", (e) => {
-      if (menuOpen && !menu.contains(e.target) && !bubble.contains(e.target)) {
+      if (
+        menuOpen &&
+        !menu.contains(e.target) &&
+        !bubble.contains(e.target)
+      ) {
         closeMenu();
       }
     });
 
-    // Keyboard
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         if (ttsPanelOpen) closeTtsPanel();
@@ -494,6 +645,14 @@
     }
   }
 
+  function updateBubbleActive() {
+    const playing =
+      window.StoryTTS?.isPlaying?.() ||
+      autoScrollEnabled ||
+      false;
+    bubble?.classList.toggle("sr-active", !!playing);
+  }
+
   // ===== Public API =====
   window.StoryReaderUI = {
     openTtsPanel,
@@ -502,15 +661,16 @@
     highlightSentenceInPanel,
     updateProgress,
     setPlaying(isPlaying) {
-      // có thể đổi icon bubble nếu muốn
+      bubble?.classList.toggle("sr-active", !!isPlaying || autoScrollEnabled);
     },
     setScrolling(isScrolling) {
       autoScrollEnabled = isScrolling;
       const textEl = document.getElementById("sr-menu-scroll-text");
       if (textEl)
         textEl.textContent = isScrolling
-          ? "Tắt Auto-scroll"
-          : "Bật Auto-scroll";
+          ? "Tắt auto-scroll"
+          : "Auto-scroll";
+      updateBubbleActive();
     },
   };
 
@@ -520,17 +680,15 @@
     initBubbleDrag();
     bindEvents();
     loadTheme();
+    loadSettingsUI();
 
-    // Dock lần đầu nếu chưa có vị trí
     setTimeout(() => {
       if (!localStorage.getItem("sr-bubble-pos")) {
         dockBubble();
       }
     }, 100);
 
-    console.log(
-      "[Story Reader] floating-toolbar.js loaded (Floating Bubble style)",
-    );
+    console.log("[Story Reader] UI loaded (cyberpunk / Ejoy style)");
   }
 
   if (document.readyState === "loading") {
