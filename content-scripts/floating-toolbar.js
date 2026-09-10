@@ -20,6 +20,34 @@
   let currentTheme = "dark";
 
   // ===== Create UI =====
+
+  function ensureCtrlElements() {
+    const wrap = document.querySelector(".sr-tts-controls");
+    if (!wrap) return;
+    const stop = document.getElementById("sr-panel-stop");
+    const play = document.getElementById("sr-panel-play");
+    if (stop && stop.tagName === "BUTTON") {
+      const d = document.createElement("div");
+      d.id = "sr-panel-stop";
+      d.className = "sr-ctrl";
+      d.setAttribute("role", "button");
+      d.tabIndex = 0;
+      d.title = "Dừng";
+      d.textContent = "■";
+      stop.replaceWith(d);
+    }
+    if (play && play.tagName === "BUTTON") {
+      const d = document.createElement("div");
+      d.id = "sr-panel-play";
+      d.className = "sr-ctrl play";
+      d.setAttribute("role", "button");
+      d.tabIndex = 0;
+      d.title = "Nghe TTS";
+      d.textContent = "▶";
+      play.replaceWith(d);
+    }
+  }
+
   function createUI() {
     // Bubble
     if (!document.getElementById("sr-bubble")) {
@@ -1132,7 +1160,8 @@
       wakeBubble();
     }
     if (bubble && !bubble.dataset.srDragBound) {
-      initBubbleDrag();
+      ensureCtrlElements();
+    initBubbleDrag();
       bubble.dataset.srDragBound = "1";
     }
   }
