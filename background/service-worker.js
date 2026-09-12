@@ -3,8 +3,8 @@
  *
  * - GOOGLE_TTS: fetch audio từ endpoint Translate công khai (tránh CORS trên trang),
  *   trả base64 cho content script phát bằng Audio + Blob.
+ * - MYMEMORY_TRANSLATE: dịch text (MyMemory free tier).
  * - PING: kiểm tra worker còn sống.
- * Không cần API key Google Cloud; endpoint free có thể bị 403/giới hạn.
  */
 console.log("[Story Reader] background service worker loaded");
 
@@ -67,6 +67,52 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "PING") {
     sendResponse({ ok: true });
+    return true;
+  }
+
+  /**
+   * MyMemory Translation API (free tier).
+   * msg: { text, langpair } — langpair ví dụ "en|vi", "zh-CN|vi"
+   * Giới hạn ~500 ký tự/request; content script đã chunk trước khi gửi.
+   */
+  if (msg.type === "MYMEMORY_TRANSLATE") {
+    const text = String(msg.text || "").slice(0, 500);
+    const langpair = msg.langpair || "en|vi";
+    const email = msg.email || "storyreader@extension.local";
+    if (!text.trim()) {
+      sendResponse({ ok: false, error: "empty" });
+      return true;
+    }
+    const url =
+      "https://api.mymemory.translated.net/get?q=" +
+      encodeURIComponent(text) +
+      "&langpair=" +
+      encodeURIComponent(langpair) +
+      "&de=" +
+      encodeURIComponent(email);
+
+    (async () => {
+      try {
+        const res = await fetch(url, { method: "GET", credentials: "omit" });
+        if (!res.ok) {
+          sendResponse({ ok: false, error: "http " + res.status });
+          return;
+        }
+        const data = await res.json();
+        const translated =
+          data && data.responseData && data.responseData.translatedText;
+        if (translated == null) {
+          sendResponse({
+            ok: false,
+            error: (data && data.responseDetails) || "no translation",
+          });
+          return;
+        }
+        sendResponse({ ok: true, translatedText: translated });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+      }
+    })();
     return true;
   }
 });

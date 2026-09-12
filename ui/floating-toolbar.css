@@ -1,11 +1,14 @@
 /**
- * Styles cho bubble, mini-menu, panel TTS, HUD auto-scroll.
- * Design: nền tối + accent cyan #00e5ff (cyberpunk / kagane-like).
- * Theme sáng: body.sr-theme-light đổi CSS variables.
- * Mobile (max-width 480px): panel dạng card dưới màn hình.
+ * Styles CHỈ cho UI extension (#sr-*).
+ * Không set :root/body để tránh đụng layout/CSS biến của trang host (orv.pages.dev…).
+ * Theme sáng: class .sr-theme-light trên từng panel.
  */
 
-:root {
+#sr-bubble,
+#sr-menu,
+#sr-tts-panel,
+#sr-scroll-hud,
+#sr-toast {
   --sr-bg: #0d1117;
   --sr-bg-elevated: #161b22;
   --sr-bg-panel: rgba(13, 17, 23, 0.97);
@@ -21,9 +24,14 @@
   --sr-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --sr-radius: 12px;
   --sr-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  box-sizing: border-box;
 }
 
-body.sr-theme-light {
+#sr-bubble.sr-theme-light,
+#sr-menu.sr-theme-light,
+#sr-tts-panel.sr-theme-light,
+#sr-scroll-hud.sr-theme-light,
+#sr-toast.sr-theme-light {
   --sr-bg: #ffffff;
   --sr-bg-elevated: #ffffff;
   --sr-bg-panel: rgba(255, 255, 255, 0.98);
@@ -34,7 +42,6 @@ body.sr-theme-light {
   --sr-accent: #00b8d4;
   --sr-accent-soft: rgba(0, 229, 255, 0.12);
   --sr-cyan: #00b8d4;
-  
   --sr-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
 }
 
@@ -741,74 +748,74 @@ span.sr-sent.sr-on {
 
 
 /* ========== Light theme overrides (mẫu ảnh 4–6) ========== */
-body.sr-theme-light #sr-menu {
+#sr-tts-panel.sr-theme-light #sr-menu {
   background: #ffffff;
   border-color: rgba(0, 0, 0, 0.08);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
   color: #1f2328;
 }
-body.sr-theme-light #sr-menu button {
+#sr-tts-panel.sr-theme-light #sr-menu button {
   color: #1f2328;
 }
-body.sr-theme-light #sr-menu button:hover {
+#sr-tts-panel.sr-theme-light #sr-menu button:hover {
   background: rgba(0, 229, 255, 0.1);
   color: #00b8d4;
 }
-body.sr-theme-light #sr-menu button.sr-active-item {
+#sr-tts-panel.sr-theme-light #sr-menu button.sr-active-item {
   background: rgba(0, 229, 255, 0.12);
   color: #00b8d4;
 }
-body.sr-theme-light #sr-menu button.sr-danger {
+#sr-tts-panel.sr-theme-light #sr-menu button.sr-danger {
   color: #656d76;
 }
-body.sr-theme-light #sr-menu button.sr-danger:hover {
+#sr-tts-panel.sr-theme-light #sr-menu button.sr-danger:hover {
   background: rgba(207, 34, 46, 0.1);
   color: #cf222e;
 }
-body.sr-theme-light #sr-menu .sr-divider {
+#sr-tts-panel.sr-theme-light #sr-menu .sr-divider {
   background: rgba(0, 0, 0, 0.08);
 }
-body.sr-theme-light #sr-bubble {
+#sr-tts-panel.sr-theme-light #sr-bubble {
   background: #ffffff;
   border-color: rgba(0, 0, 0, 0.1);
 }
-body.sr-theme-light #sr-tts-panel {
+#sr-tts-panel.sr-theme-light #sr-tts-panel {
   background: rgba(255, 255, 255, 0.98);
   border-left-color: rgba(0, 0, 0, 0.08);
   color: #1f2328;
 }
-body.sr-theme-light .sr-tts-header {
+#sr-tts-panel.sr-theme-light .sr-tts-header {
   border-bottom-color: rgba(0, 0, 0, 0.06);
 }
-body.sr-theme-light .sr-tts-header button {
+#sr-tts-panel.sr-theme-light .sr-tts-header button {
   color: #656d76;
 }
-body.sr-theme-light .sr-tts-header button:hover {
+#sr-tts-panel.sr-theme-light .sr-tts-header button:hover {
   color: #1f2328;
   background: rgba(0, 0, 0, 0.05);
 }
-body.sr-theme-light .sr-tts-header button.sr-on {
+#sr-tts-panel.sr-theme-light .sr-tts-header button.sr-on {
   color: #00b8d4;
   background: rgba(0, 229, 255, 0.1);
 }
-body.sr-theme-light .sr-sentence-item:hover {
+#sr-tts-panel.sr-theme-light .sr-sentence-item:hover {
   background: rgba(0, 0, 0, 0.04);
 }
-body.sr-theme-light .sr-sentence-item.active {
+#sr-tts-panel.sr-theme-light .sr-sentence-item.active {
   background: rgba(0, 229, 255, 0.1) !important;
   box-shadow: inset 3px 0 0 #00b8d4;
 }
-body.sr-theme-light .sr-sentence-item.active .sr-idx {
+#sr-tts-panel.sr-theme-light .sr-sentence-item.active .sr-idx {
   color: #00b8d4;
 }
-body.sr-theme-light .sr-set-group {
+#sr-tts-panel.sr-theme-light .sr-set-group {
   background: #f6f8fa;
   border-color: rgba(0, 0, 0, 0.06);
 }
-body.sr-theme-light .sr-set-title {
+#sr-tts-panel.sr-theme-light .sr-set-title {
   color: #656d76;
 }
-body.sr-theme-light .sr-tts-settings select {
+#sr-tts-panel.sr-theme-light .sr-tts-settings select {
   background-color: #ffffff !important;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23656d76' d='M3 4.5L6 8l3-3.5'/%3E%3C/svg%3E") !important;
   background-repeat: no-repeat !important;
@@ -816,88 +823,88 @@ body.sr-theme-light .sr-tts-settings select {
   color: #1f2328 !important;
   border-color: rgba(0, 229, 255, 0.4);
 }
-body.sr-theme-light .sr-tts-settings select option,
-body.sr-theme-light .sr-tts-settings select optgroup {
+#sr-tts-panel.sr-theme-light .sr-tts-settings select option,
+#sr-tts-panel.sr-theme-light .sr-tts-settings select optgroup {
   background: #ffffff !important;
   color: #1f2328 !important;
 }
-body.sr-theme-light .sr-set-group {
+#sr-tts-panel.sr-theme-light .sr-set-group {
   background: #ffffff;
   border-color: rgba(0, 0, 0, 0.08);
 }
-body.sr-theme-light .sr-color-swatch {
+#sr-tts-panel.sr-theme-light .sr-color-swatch {
   border-color: rgba(0, 0, 0, 0.12);
   background: #ffffff;
 }
-body.sr-theme-light .sr-slider-label {
+#sr-tts-panel.sr-theme-light .sr-slider-label {
   color: #1f2328;
 }
-body.sr-theme-light .sr-val {
+#sr-tts-panel.sr-theme-light .sr-val {
   color: #00b8d4;
 }
-body.sr-theme-light .sr-tts-settings input[type="range"] {
+#sr-tts-panel.sr-theme-light .sr-tts-settings input[type="range"] {
   background: rgba(0, 0, 0, 0.1);
 }
-body.sr-theme-light .sr-tts-settings input[type="range"]::-webkit-slider-thumb {
+#sr-tts-panel.sr-theme-light .sr-tts-settings input[type="range"]::-webkit-slider-thumb {
   background: #00b8d4;
   box-shadow: none;
 }
-body.sr-theme-light .sr-save-btn {
+#sr-tts-panel.sr-theme-light .sr-save-btn {
   background: rgba(0, 229, 255, 0.08);
   border-color: rgba(0, 229, 255, 0.3);
   color: #00b8d4;
 }
-body.sr-theme-light .sr-save-btn:hover {
+#sr-tts-panel.sr-theme-light .sr-save-btn:hover {
   background: rgba(0, 229, 255, 0.14);
   border-color: #00b8d4;
 }
-body.sr-theme-light .sr-tts-footer {
+#sr-tts-panel.sr-theme-light .sr-tts-footer {
   border-top-color: rgba(0, 0, 0, 0.06);
   background: rgba(255, 255, 255, 0.98);
 }
-body.sr-theme-light .sr-tts-controls .sr-ctrl,
-body.sr-theme-light .sr-tts-controls button {
+#sr-tts-panel.sr-theme-light .sr-tts-controls .sr-ctrl,
+#sr-tts-panel.sr-theme-light .sr-tts-controls button {
   border-color: rgba(0, 229, 255, 0.3);
   color: #1f2328;
 }
-body.sr-theme-light .sr-tts-controls .sr-ctrl:hover,
-body.sr-theme-light .sr-tts-controls button:hover {
+#sr-tts-panel.sr-theme-light .sr-tts-controls .sr-ctrl:hover,
+#sr-tts-panel.sr-theme-light .sr-tts-controls button:hover {
   background: rgba(0, 229, 255, 0.1);
   border-color: #00b8d4;
   color: #00b8d4;
   box-shadow: 0 0 12px rgba(0, 229, 255, 0.25);
 }
-body.sr-theme-light .sr-tts-controls .sr-ctrl.play,
-body.sr-theme-light .sr-tts-controls button.play,
-body.sr-theme-light .sr-tts-controls #sr-panel-play {
+#sr-tts-panel.sr-theme-light .sr-tts-controls .sr-ctrl.play,
+#sr-tts-panel.sr-theme-light .sr-tts-controls button.play,
+#sr-tts-panel.sr-theme-light .sr-tts-controls #sr-panel-play {
   background: #00b8d4;
   border-color: #00b8d4;
   color: #ffffff;
   box-shadow: 0 0 16px rgba(0, 229, 255, 0.4);
 }
-body.sr-theme-light .sr-tts-controls .sr-ctrl.play:hover,
-body.sr-theme-light .sr-tts-controls button.play:hover {
+#sr-tts-panel.sr-theme-light .sr-tts-controls .sr-ctrl.play:hover,
+#sr-tts-panel.sr-theme-light .sr-tts-controls button.play:hover {
   box-shadow: 0 0 22px rgba(0, 229, 255, 0.55);
   filter: brightness(1.05);
 }
-body.sr-theme-light .sr-empty {
+#sr-tts-panel.sr-theme-light .sr-empty {
   color: #656d76;
 }
-body.sr-theme-light .sr-tts-progress {
+#sr-tts-panel.sr-theme-light .sr-tts-progress {
   color: #656d76;
 }
-body.sr-theme-light #sr-scroll-hud {
+#sr-tts-panel.sr-theme-light #sr-scroll-hud {
   background: rgba(255, 255, 255, 0.96);
   border-color: rgba(0, 0, 0, 0.1);
   color: #1f2328;
 }
-body.sr-theme-light #sr-scroll-hud button {
+#sr-tts-panel.sr-theme-light #sr-scroll-hud button {
   color: #1f2328;
 }
-body.sr-theme-light #sr-hud-speed strong {
+#sr-tts-panel.sr-theme-light #sr-hud-speed strong {
   color: #00b8d4;
 }
-body.sr-theme-light #sr-hud-speed small {
+#sr-tts-panel.sr-theme-light #sr-hud-speed small {
   color: rgba(0, 229, 255, 0.75);
 }
 
@@ -942,16 +949,16 @@ body.sr-theme-light #sr-hud-speed small {
   transform: translateX(18px);
   background: #00e5ff;
 }
-body.sr-theme-light .sr-switch-ui {
+#sr-tts-panel.sr-theme-light .sr-switch-ui {
   background: rgba(0, 0, 0, 0.12);
 }
-body.sr-theme-light .sr-switch-ui::after {
+#sr-tts-panel.sr-theme-light .sr-switch-ui::after {
   background: #ffffff;
 }
-body.sr-theme-light .sr-switch input:checked + .sr-switch-ui {
+#sr-tts-panel.sr-theme-light .sr-switch input:checked + .sr-switch-ui {
   background: rgba(0, 229, 255, 0.5);
 }
-body.sr-theme-light .sr-switch input:checked + .sr-switch-ui::after {
+#sr-tts-panel.sr-theme-light .sr-switch input:checked + .sr-switch-ui::after {
   background: #00b8d4;
 }
 
@@ -993,12 +1000,12 @@ body.sr-theme-light .sr-switch input:checked + .sr-switch-ui::after {
 #sr-goto-btn:hover {
   background: rgba(0, 229, 255, 0.22);
 }
-body.sr-theme-light #sr-goto {
+#sr-tts-panel.sr-theme-light #sr-goto {
   background: #ffffff;
   color: #1f2328;
   border-color: rgba(0, 0, 0, 0.12);
 }
-body.sr-theme-light #sr-goto-btn {
+#sr-tts-panel.sr-theme-light #sr-goto-btn {
   color: #00b8d4;
   border-color: rgba(0, 229, 255, 0.4);
 }
@@ -1067,4 +1074,30 @@ body.sr-theme-light #sr-goto-btn {
     transform: none !important;
     opacity: 1 !important;
   }
+}
+
+
+/* Toast thông báo ngắn (dịch / lỗi) */
+#sr-toast {
+  position: fixed;
+  bottom: 88px;
+  left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  z-index: 2147483646;
+  max-width: min(90vw, 360px);
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: rgba(13, 17, 23, 0.94);
+  color: #e6edf3;
+  font-size: 13px;
+  font-family: var(--sr-font);
+  border: 1px solid rgba(0, 229, 255, 0.25);
+  box-shadow: var(--sr-shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+#sr-toast.sr-show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
