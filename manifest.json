@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Story Reader & Translator",
-  "version": "0.5.0",
+  "version": "0.5.12",
   "description": "Đọc truyện, dịch trang, tự cuộn — hoạt động trên mọi trang web",
   "permissions": ["storage", "scripting", "activeTab"],
   "host_permissions": ["<all_urls>"],

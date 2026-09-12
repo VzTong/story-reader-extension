@@ -137,19 +137,23 @@
         <div class="sr-tts-settings" id="sr-tts-settings">
           <div class="sr-set-group">
             <div class="sr-set-title">Giọng nói</div>
-            <select id="sr-voice-select"></select>
+            <select id="sr-tts-engine" title="Engine TTS">
+              <option value="web">Giọng máy (Windows/Chrome)</option>
+              <option value="google">Google Translate (online)</option>
+            </select>
+            <select id="sr-voice-select" style="margin-top:8px"></select>
           </div>
 
           <div class="sr-set-group">
             <div class="sr-set-title">Âm thanh</div>
             <div class="sr-slider-row">
               <span class="sr-slider-label">Tốc độ đọc</span>
-              <input type="range" id="sr-rate" min="0.5" max="2" step="0.1" value="1">
+              <input type="range" id="sr-rate" min="0.5" max="5" step="0.1" value="1">
               <span class="sr-val" id="sr-rate-val">1.0</span>
             </div>
             <div class="sr-slider-row">
               <span class="sr-slider-label">Độ cao giọng</span>
-              <input type="range" id="sr-pitch" min="0.5" max="1.5" step="0.1" value="1">
+              <input type="range" id="sr-pitch" min="0.5" max="2" step="0.1" value="1">
               <span class="sr-val" id="sr-pitch-val">1.0</span>
             </div>
             <div class="sr-slider-row">
@@ -172,11 +176,22 @@
                 <input type="color" id="sr-highlight-color" value="#ffe650">
               </label>
             </div>
+            <div class="sr-color-row" style="margin-top:10px">
+              <span class="sr-slider-label">Tự next chương</span>
+              <label class="sr-switch" title="Hết chương tự mở chương sau">
+                <input type="checkbox" id="sr-auto-next" checked>
+                <span class="sr-switch-ui"></span>
+              </label>
+            </div>
           </div>
 
           <div role="button" tabindex="0" class="sr-save-btn" id="sr-save-settings">Lưu cài đặt</div>
         </div>
         <div class="sr-tts-footer">
+          <div class="sr-goto-row">
+            <input type="text" id="sr-goto" placeholder="Go to # / tìm câu…" title="Nhập số câu hoặc một đoạn chữ để nhảy">
+            <button type="button" id="sr-goto-btn" title="Nhảy tới">↵</button>
+          </div>
           <div class="sr-tts-progress" id="sr-progress">0 / 0</div>
           <div class="sr-tts-controls">
             <div role="button" tabindex="0" class="sr-ctrl" id="sr-panel-stop" title="Dừng">■</div>
@@ -336,11 +351,12 @@
   function scheduleBubbleIdle() {
     clearTimeout(bubbleIdleTimer);
     bubble?.classList.remove("sr-idle-hide");
-    // Don't hide while menu/panel open or dragging
     bubbleIdleTimer = setTimeout(() => {
       if (menuOpen || ttsPanelOpen) return;
       if (bubble?.classList.contains("sr-dragging")) return;
-      // only half-hide if docked to edge
+      // Mobile / DevTools device mode: không half-hide (bubble bị cắt)
+      const vs = viewportSize();
+      if (vs.w <= 900 || "ontouchstart" in window) return;
       if (
         bubble?.classList.contains("sr-docked-left") ||
         bubble?.classList.contains("sr-docked-right")
@@ -355,17 +371,36 @@
     scheduleBubbleIdle();
   }
 
+  function viewportSize() {
+    const vv = window.visualViewport;
+    return {
+      w: (vv && vv.width) || window.innerWidth || document.documentElement.clientWidth || 360,
+      h: (vv && vv.height) || window.innerHeight || document.documentElement.clientHeight || 640,
+    };
+  }
+
   function initBubbleDrag() {
     bubble?.addEventListener("mouseenter", wakeBubble);
     bubble?.addEventListener("mouseleave", scheduleBubbleIdle);
 
     let startX, startY, startLeft, startTop;
     let moved = false;
+    let activePointer = null;
 
     const onStart = (e) => {
+      if (!bubble || bubble.style.display === "none") return;
+      // Chỉ nhận nút trái / touch
+      if (e.type === "mousedown" && e.button !== 0) return;
+      if (e.type === "touchstart" && e.touches.length > 1) return;
+
+      wakeBubble();
       isDragging = true;
       moved = false;
+      activePointer = e.type;
+      bubble.classList.add("sr-dragging");
+      bubble.classList.remove("sr-idle-hide", "sr-docked-left", "sr-docked-right");
       bubble.style.transition = "none";
+      bubble.style.transform = "none";
 
       const clientX = e.touches ? e.touches[0].clientX : e.clientX;
       const clientY = e.touches ? e.touches[0].clientY : e.clientY;
@@ -376,58 +411,69 @@
       startLeft = rect.left;
       startTop = rect.top;
 
-      bubble.classList.remove("sr-docked-left", "sr-docked-right");
+      // Ép dùng left/top tuyệt đối (tránh right:0 + dock làm mất hit-area khi F12)
+      bubble.style.left = startLeft + "px";
+      bubble.style.top = startTop + "px";
+      bubble.style.right = "auto";
+      bubble.style.bottom = "auto";
+
+      if (e.type === "touchstart") e.preventDefault();
     };
 
     const onMove = (e) => {
-      if (!isDragging) return;
-      e.preventDefault();
-
+      if (!isDragging || !bubble) return;
       const clientX = e.touches ? e.touches[0].clientX : e.clientX;
       const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      if (clientX == null) return;
 
       const dx = clientX - startX;
       const dy = clientY - startY;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
 
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
-
+      const vs = viewportSize();
+      const size = 44;
       let newLeft = startLeft + dx;
       let newTop = startTop + dy;
-
-      newLeft = Math.max(0, Math.min(window.innerWidth - 44, newLeft));
-      newTop = Math.max(0, Math.min(window.innerHeight - 44, newTop));
+      newLeft = Math.max(0, Math.min(vs.w - size, newLeft));
+      newTop = Math.max(0, Math.min(vs.h - size, newTop));
 
       bubble.style.left = newLeft + "px";
       bubble.style.top = newTop + "px";
       bubble.style.right = "auto";
       bubble.style.bottom = "auto";
+      bubble.style.transform = "none";
+
+      if (e.cancelable) e.preventDefault();
     };
 
-    const onEnd = () => {
+    const onEnd = (e) => {
       if (!isDragging) return;
       isDragging = false;
+      bubble.classList.remove("sr-dragging");
       bubble.style.transition = "";
 
       if (!moved) {
-        // Khôi phục trạng thái dock để bubble vẫn click/hover được như sau khi kéo
+        // Click: giữ vị trí hiện tại, mở menu — không dock nửa màn hình
         restoreDockClass();
         toggleMenu();
+        scheduleBubbleIdle();
         return;
       }
 
       dockBubble();
       saveBubblePos();
       positionScrollHud();
+      scheduleBubbleIdle();
     };
 
     bubble.addEventListener("mousedown", onStart);
     bubble.addEventListener("touchstart", onStart, { passive: false });
 
-    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mousemove", onMove, { passive: false });
     window.addEventListener("touchmove", onMove, { passive: false });
-
     window.addEventListener("mouseup", onEnd);
     window.addEventListener("touchend", onEnd);
+    window.addEventListener("touchcancel", onEnd);
   }
 
   function restoreDockClass() {
@@ -444,20 +490,28 @@
 
   function dockBubble() {
     const rect = bubble.getBoundingClientRect();
+    const vs = viewportSize();
     const centerX = rect.left + rect.width / 2;
-    const isLeft = centerX < window.innerWidth / 2;
+    const isLeft = centerX < vs.w / 2;
+    // Device mode / mobile: mép 10px, không flush 0 (tránh bubble bị cắt)
+    const edge = vs.w <= 900 ? 10 : 0;
 
-    bubble.classList.remove("sr-docked-left", "sr-docked-right");
+    bubble.classList.remove("sr-docked-left", "sr-docked-right", "sr-idle-hide");
 
     if (isLeft) {
-      bubble.style.left = "0px";
+      bubble.style.left = edge + "px";
       bubble.style.right = "auto";
-      bubble.classList.add("sr-docked-left");
+      if (edge === 0) bubble.classList.add("sr-docked-left");
     } else {
       bubble.style.left = "auto";
-      bubble.style.right = "0px";
-      bubble.classList.add("sr-docked-right");
+      bubble.style.right = edge + "px";
+      if (edge === 0) bubble.classList.add("sr-docked-right");
     }
+    // Giữ top trong khung
+    let top = rect.top;
+    top = Math.max(8, Math.min(top, vs.h - 52));
+    bubble.style.top = top + "px";
+    bubble.style.bottom = "auto";
   }
 
   function saveBubblePos() {
@@ -477,13 +531,23 @@
 
   function openMenu() {
     wakeBubble();
+    // Mobile: kéo bubble vào trong viewport trước khi mở menu
+    if (bubble && (window.innerWidth <= 640 || "ontouchstart" in window)) {
+      bubble.classList.remove("sr-idle-hide", "sr-docked-left", "sr-docked-right");
+      const br = bubble.getBoundingClientRect();
+      if (br.right > window.innerWidth - 8 || br.width < 30) {
+        bubble.style.left = "auto";
+        bubble.style.right = "12px";
+        bubble.style.top = Math.min(br.top, window.innerHeight - 80) + "px";
+        bubble.style.bottom = "auto";
+      }
+    }
     const rect = bubble.getBoundingClientRect();
-    const menuWidth = 196;
-    const edge = 24; // cách mép màn hình
-    const gap = 14; // cách bubble
+    const menuWidth = Math.min(196, window.innerWidth - 24);
+    const edge = 12;
+    const gap = 10;
 
     let left = rect.left + rect.width / 2 - menuWidth / 2;
-    // Nếu bubble sát cạnh phải → neo menu lệch vào trong
     if (rect.right > window.innerWidth - 40) {
       left = Math.min(left, window.innerWidth - menuWidth - edge);
     }
@@ -492,17 +556,20 @@
     }
     left = Math.max(edge, Math.min(left, window.innerWidth - menuWidth - edge));
 
-    if (rect.top > 240) {
+    // Ưu tiên menu phía trên bubble nếu đủ chỗ, không tràn mép
+    const menuH = 280;
+    if (rect.top > menuH + 20) {
       menu.style.top = rect.top - gap + "px";
       menu.style.transformOrigin = "bottom center";
       menu.style.transform = "translateY(-100%) scale(0.95)";
     } else {
-      menu.style.top = rect.bottom + gap + "px";
+      menu.style.top = Math.min(rect.bottom + gap, window.innerHeight - menuH - 8) + "px";
       menu.style.transformOrigin = "top center";
       menu.style.transform = "scale(0.95)";
     }
 
     menu.style.left = left + "px";
+    menu.style.width = menuWidth + "px";
     menu.classList.add("sr-open");
     menuOpen = true;
 
@@ -676,6 +743,27 @@
   }
 
   // ===== Voices =====
+  function syncEngineUI() {
+    const eng = document.getElementById("sr-tts-engine");
+    const voice = document.getElementById("sr-voice-select");
+    if (!eng || !voice) return;
+    const isGoogle = eng.value === "google";
+    voice.style.display = isGoogle ? "none" : "";
+    let note = document.getElementById("sr-google-note");
+    if (isGoogle) {
+      if (!note) {
+        note = document.createElement("div");
+        note.id = "sr-google-note";
+        note.className = "sr-google-note";
+        note.textContent = "Không cần API key · dùng endpoint công khai Google Translate · có thể bị chặn/giới hạn";
+        voice.parentNode.insertBefore(note, voice.nextSibling);
+      }
+      note.style.display = "";
+    } else if (note) {
+      note.style.display = "none";
+    }
+  }
+
   function populateVoices() {
     const select = document.getElementById("sr-voice-select");
     if (!select || !window.speechSynthesis) return;
@@ -756,6 +844,16 @@
     const scroll = localStorage.getItem("sr-scroll-px") || "135";
     const hlColor = localStorage.getItem("sr-highlight-color") || "#ffe650";
 
+    const autoNextEl = document.getElementById("sr-auto-next");
+    if (autoNextEl) {
+      autoNextEl.checked = localStorage.getItem("sr-auto-next") !== "0";
+    }
+    const engEl = document.getElementById("sr-tts-engine");
+    if (engEl) {
+      engEl.value = localStorage.getItem("sr-tts-engine") || "web";
+    }
+    syncEngineUI();
+
     const rateEl = document.getElementById("sr-rate");
     const pitchEl = document.getElementById("sr-pitch");
     const contextEl = document.getElementById("sr-context");
@@ -804,6 +902,10 @@
   }
 
   function saveSettings() {
+    const autoNext = document.getElementById("sr-auto-next")?.checked !== false;
+    localStorage.setItem("sr-auto-next", autoNext ? "1" : "0");
+    if (window.StoryTTS) window.StoryTTS.autoNextChapter = autoNext;
+
     const rate = document.getElementById("sr-rate")?.value || "1";
     const pitch = document.getElementById("sr-pitch")?.value || "1";
     const context = document.getElementById("sr-context")?.value || "2";
@@ -839,14 +941,16 @@
   }
 
   function applyHighlightColor(hex) {
-    // Convert #RRGGBB → rgba with alpha ~0.42
+    if (!hex || hex[0] !== "#" || hex.length < 7) hex = "#ffe650";
     const r = parseInt(hex.slice(1, 3), 16);
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
-    document.documentElement.style.setProperty(
-      "--sr-highlight",
-      `rgba(${r}, ${g}, ${b}, 0.42)`
-    );
+    const val = `rgba(${r}, ${g}, ${b}, 0.45)`;
+    // Set cả html + body để theme light không đè lại
+    document.documentElement.style.setProperty("--sr-highlight", val);
+    document.body.style.setProperty("--sr-highlight", val);
+    const colorEl = document.getElementById("sr-highlight-color");
+    if (colorEl && colorEl.value !== hex) colorEl.value = hex;
   }
 
   // ===== Theme =====
@@ -854,12 +958,17 @@
     currentTheme = currentTheme === "dark" ? "light" : "dark";
     document.body.classList.toggle("sr-theme-light", currentTheme === "light");
     localStorage.setItem("sr-theme", currentTheme);
+    // Giữ màu tô do user chọn (không bị CSS theme đè)
+    const hex = localStorage.getItem("sr-highlight-color") || "#ffe650";
+    applyHighlightColor(hex);
   }
 
   function loadTheme() {
     const saved = localStorage.getItem("sr-theme") || "dark";
     currentTheme = saved;
     document.body.classList.toggle("sr-theme-light", saved === "light");
+    const hex = localStorage.getItem("sr-highlight-color") || "#ffe650";
+    applyHighlightColor(hex);
   }
 
   // ===== Events =====
@@ -892,7 +1001,33 @@
 
     document.getElementById("sr-menu-tts")?.addEventListener("click", () => {
       closeMenu();
-      // Đang auto-scroll → tắt khi bắt đầu nghe
+      const playing = window.StoryTTS?.isPlaying?.();
+      const paused =
+        !playing &&
+        window.StoryTTS?.getSentences?.()?.length &&
+        window.StoryTTS?.getCurrentIndex != null;
+
+      // Đang phát → chỉ pause, KHÔNG mở list / không start lại
+      if (playing) {
+        window.StoryTTS.pause();
+        syncPlayButton();
+        updateBubbleActive();
+        return;
+      }
+
+      // Đang pause → resume đúng chỗ
+      if (window.StoryTTS?.getSentences?.()?.length) {
+        // Kiểm tra isPaused qua toggle (resume)
+        const idx = window.StoryTTS.getCurrentIndex?.() ?? 0;
+        if (idx >= 0) {
+          window.StoryTTS.togglePlay?.();
+          syncPlayButton();
+          updateBubbleActive();
+          return;
+        }
+      }
+
+      // Bắt đầu mới: tắt scroll, mở panel, nghe từ viewport
       if (autoScrollEnabled) {
         autoScrollEnabled = false;
         window.StoryTTS?.stopAutoScroll?.();
@@ -902,10 +1037,11 @@
       }
       openTtsPanel(false);
       setTimeout(() => {
-        window.StoryTTS?.togglePlay?.();
+        window.StoryTTS?.startFromPage?.();
         buildSentenceList();
+        syncPlayButton();
         updateBubbleActive();
-      }, 50);
+      }, 80);
     });
 
     document.getElementById("sr-menu-list")?.addEventListener("click", () => {
@@ -986,6 +1122,29 @@
       });
     });
 
+    const doGoto = () => {
+      const q = document.getElementById("sr-goto")?.value || "";
+      const ok = window.StoryTTS?.jumpToByQuery?.(q);
+      if (ok) {
+        buildSentenceList();
+        syncPlayButton();
+        updateBubbleActive();
+      } else if (q.trim()) {
+        const inp = document.getElementById("sr-goto");
+        if (inp) {
+          inp.style.borderColor = "#ff3b6b";
+          setTimeout(() => { inp.style.borderColor = ""; }, 800);
+        }
+      }
+    };
+    document.getElementById("sr-goto-btn")?.addEventListener("click", doGoto);
+    document.getElementById("sr-goto")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        doGoto();
+      }
+    });
+
     document.getElementById("sr-panel-stop")
       ?.addEventListener("click", () => {
         window.StoryTTS?.stop?.();
@@ -1001,6 +1160,18 @@
           prog.textContent = "0 / " + total;
         }
       });
+
+    document.getElementById("sr-auto-next")?.addEventListener("change", (e) => {
+      const on = !!e.target.checked;
+      localStorage.setItem("sr-auto-next", on ? "1" : "0");
+      if (window.StoryTTS) window.StoryTTS.autoNextChapter = on;
+    });
+    document.getElementById("sr-tts-engine")?.addEventListener("change", (e) => {
+      const v = e.target.value === "google" ? "google" : "web";
+      localStorage.setItem("sr-tts-engine", v);
+      if (window.StoryTTS) window.StoryTTS.ttsEngine = v;
+      syncEngineUI();
+    });
 
     document.getElementById("sr-rate")?.addEventListener("input", (e) => {
       document.getElementById("sr-rate-val").textContent = e.target.value;
@@ -1062,7 +1233,8 @@
     let userScrollTimer = null;
     const onUserScrollIntent = () => {
       if (!autoScrollEnabled) return;
-      // Mỗi lần lướt: pause + đếm lại 2s rồi resume
+      // Bỏ qua scroll do chính extension tạo ra (tránh ngắt 2s trên kagane)
+      if (window.StoryTTS?.isProgrammaticScroll?.()) return;
       window.StoryTTS?.pauseAutoScroll?.(2);
       clearTimeout(userScrollTimer);
       userScrollTimer = setTimeout(() => {
@@ -1070,7 +1242,17 @@
       }, 2000);
     };
     window.addEventListener("wheel", onUserScrollIntent, { passive: true });
-    window.addEventListener("touchmove", onUserScrollIntent, { passive: true });
+    // Không bind touchmove toàn cục — trên manga/kagane dễ false-pause ~2s
+    window.addEventListener(
+      "touchstart",
+      function (e) {
+        if (!autoScrollEnabled) return;
+        if (window.StoryTTS?.isProgrammaticScroll?.()) return;
+        // chỉ pause khi user chạm (không phải programmatic)
+        if (e.touches && e.touches.length) window.StoryTTS?.pauseAutoScroll?.(2);
+      },
+      { passive: true }
+    );
   }
 
   function syncPlayButton() {
@@ -1105,6 +1287,8 @@
 
   // ===== Public API =====
   window.StoryReaderUI = {
+    showToolbar() { showToolbar(); },
+    hideToolbar() { hideToolbar(); },
     openTtsPanel,
     closeTtsPanel,
     buildSentenceList,
@@ -1161,7 +1345,7 @@
     }
     if (bubble && !bubble.dataset.srDragBound) {
       ensureCtrlElements();
-    initBubbleDrag();
+      initBubbleDrag();
       bubble.dataset.srDragBound = "1";
     }
   }
@@ -1192,6 +1376,7 @@
   // ===== Init =====
   function init() {
     createUI(); // bubble display:none cho đến khi popup bật
+
     // Không bind drag / không hiện bubble — chờ SHOW_TOOLBAR
     bindEvents();
     loadTheme();

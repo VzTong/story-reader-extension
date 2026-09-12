@@ -4,6 +4,13 @@ function cleanText(text) {
   if (!text) return "";
 
   return text
+    // UI / gift / ranking webnovel
+    .replace(/Load failed[\s\S]{0,150}?(?:Like|Gifts?|Vote|Power)/gi, " ")
+    .replace(/Wanna gift[\s\S]{0,80}?one\.?/gi, " ")
+    .replace(/SEND GIFT/gi, " ")
+    .replace(/Weekly Power[\s\S]{0,100}/gi, " ")
+    .replace(/Power Ranking[\s\S]{0,80}/gi, " ")
+    .replace(/Power stone[\s\S]{0,60}/gi, " ")
     // Bỏ chuỗi ***** dài
     .replace(/\*{4,}/g, "")
     // Bỏ "Edit: xxx"
@@ -93,14 +100,18 @@ function detectContent() {
 
   // Fallback heuristic
   const contentSelectors = [
+    ".cha-words",
     ".cha-content",
     ".chapter_content",
     ".novel-content",
+    "[class*='chapter-content']",
+    "[class*='chapter_content']",
     "div.entry-content",
     "article .post-content",
     "article",
     ".chapter-content",
     "#chapter-content",
+    ".content-body",
     ".content",
     "main",
     "#content"
