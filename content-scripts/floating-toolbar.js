@@ -761,7 +761,12 @@
     const el = document.getElementById("sr-progress");
     if (!el || !window.StoryTTS) return;
     const total = window.StoryTTS.getSentences?.()?.length || 0;
-    const current = (window.StoryTTS.getCurrentIndex?.() || 0) + 1;
+    // Đã stop hẳn → 0/N; đang nghe hoặc pause → index+1
+    const active =
+      window.StoryTTS.isSessionActive?.() || window.StoryTTS.isPlaying?.();
+    const current = active
+      ? (window.StoryTTS.getCurrentIndex?.() || 0) + 1
+      : 0;
     el.textContent = `${Math.min(current, total)} / ${total}`;
   }
 
@@ -1116,12 +1121,14 @@
       if (window.StoryTTS) {
         window.StoryTTS.stopAutoScroll();
         window.StoryTTS.stop();
-        // Gọi lần 2 phòng race với rAF
         setTimeout(function () {
           window.StoryTTS.stopAutoScroll();
           window.StoryTTS.stop();
+          updateProgress();
+          syncPlayButton();
         }, 50);
       }
+      updateProgress();
       hideScrollHud();
       syncPlayButton();
       updateBubbleActive();
@@ -1194,17 +1201,9 @@
         } catch (e) {}
         window.StoryTTS?.stop?.();
         hideScrollHud();
+        updateProgress();
         syncPlayButton();
         updateBubbleActive();
-        if (window.StoryReaderUI?.updateProgress) {
-          /* progress via UI */
-        }
-        // Force UI progress text
-        const prog = document.querySelector(".sr-tts-progress");
-        if (prog) {
-          const total = window.StoryTTS?.getSentences?.()?.length || 0;
-          prog.textContent = "0 / " + total;
-        }
       });
 
     document.getElementById("sr-auto-next")?.addEventListener("change", (e) => {

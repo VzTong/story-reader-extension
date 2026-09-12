@@ -1228,17 +1228,18 @@
     }
   }
 
+  /** Dừng TTS hẳn (menu Dừng tất cả / panel ■). Reset progress về 0/total. */
   function stop() {
+    bumpSpeakGeneration(); // hủy speakNext / google callback còn treo
     isPaused = false;
     isSpeaking = false;
-    bumpSpeakGeneration();
+    currentIndex = 0; // progress hiển thị 0 / N
     stopGoogleAudio();
-    if (!autoScrollEnabled) releaseWakeLock();
     try {
       speechSynthesis.cancel();
-    } catch (e) {}
-    // Giữ currentIndex — lần nghe sau có thể resume / viewport
+    } catch (err) {}
     clearPageHighlight();
+    if (!autoScrollEnabled) releaseWakeLock();
     window.StoryReaderUI?.setPlaying?.(false);
     if (window.StoryReaderUI?.updateProgress) {
       window.StoryReaderUI.updateProgress();
@@ -1781,6 +1782,10 @@
     },
     isPlaying: function () {
       return isSpeaking && !isPaused;
+    },
+    /** true nếu đang phát hoặc đang pause giữa chừng (chưa stop) */
+    isSessionActive: function () {
+      return isSpeaking || isPaused;
     },
     isProgrammaticScroll: function () {
       return !!srProgrammaticScroll;

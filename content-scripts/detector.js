@@ -87,42 +87,72 @@ function detectWebnovelChapters() {
   var parts = [];
   var seen = {};
 
-  function pushText(raw, sourceTag) {
+  function pushText(raw) {
     var t = cleanText(raw || "");
-    if (t.length < 50) return;
-    // Tránh trùng đoạn (cùng 80 ký tự đầu)
+    if (t.length < 40) return;
     var sig = t.slice(0, 80);
     if (seen[sig]) return;
     seen[sig] = true;
     parts.push(t);
   }
 
-  // Các selector hay gặp trên webnovel reader
+  /**
+   * Mỗi chapter: lấy tiêu đề (cha-tit / h1…) + body (cha-words)
+   * để TTS đọc luôn tên chương trước nội dung.
+   */
+  function pushChapterBlock(block) {
+    if (!block || (block.closest && block.closest("nav, header, footer, .g_header"))) return;
+    var titleEl = block.querySelector(
+      ".cha-tit, .cha-title, h1, h2, h3, .chapter-title, [class*='cha-tit'], [class*='chapter-title']"
+    );
+    var bodyEl =
+      block.querySelector(".cha-words, [class*='cha-words'], .cha-content") || block;
+    // Tránh lấy cả block lồng nhau hai lần
+    if (bodyEl !== block && block.classList && block.classList.contains("cha-words")) {
+      bodyEl = block;
+      titleEl = null;
+    }
+    var title = titleEl ? cleanText(titleEl.innerText || titleEl.textContent || "") : "";
+    var body = cleanText(bodyEl.innerText || bodyEl.textContent || "");
+    if (title && body.indexOf(title) === 0) {
+      // body đã chứa title
+      pushText(body);
+    } else if (title && body) {
+      pushText(title + ". " + body);
+    } else {
+      pushText(body || title);
+    }
+  }
+
+  // Ưu tiên item chapter (mỗi chapter một khối)
+  var chapterItems = document.querySelectorAll(
+    ".j_chapter_item, .chapter_content_item, [class*='chapter-item'], [class*='cha-item']"
+  );
+  if (chapterItems.length) {
+    chapterItems.forEach(pushChapterBlock);
+  }
+
+  // Các khối content còn lại
   var sels = [
-    ".cha-words",
     ".cha-content",
+    ".cha-words",
     ".chapter-content",
     "[class*='cha-words']",
     "[class*='chapter_content']",
     "[class*='chapter-content']",
-    "div.cha-content div",
-    ".j_chapter_item .cha-words",
-    ".chapter_content_item",
   ];
   for (var s = 0; s < sels.length; s++) {
     try {
       document.querySelectorAll(sels[s]).forEach(function (el) {
-        // Bỏ node quá nhỏ hoặc menu
-        if (el.closest && el.closest("nav, header, footer, .g_header")) return;
-        pushText(el.innerText || el.textContent, sels[s]);
+        if (el.closest && el.closest(".j_chapter_item, .chapter_content_item")) return;
+        pushChapterBlock(el);
       });
-    } catch (e) {}
+    } catch (err) {}
   }
 
-  // Fallback: article / main dài
   if (!parts.length) {
     document.querySelectorAll("article, main, .reader").forEach(function (el) {
-      pushText(el.innerText, "main");
+      pushText(el.innerText);
     });
   }
 
