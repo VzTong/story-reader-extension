@@ -241,7 +241,7 @@
     positionScrollHud();
 
     document.getElementById("sr-hud-pause")?.addEventListener("click", () => {
-      // pause without auto-resume; long-press style not needed
+      // ⏸ = tạm dừng GIỮ nguyên (không tự resume 3s). User cuộn tay mới pause+resume 3s.
       window.StoryTTS?.toggleAutoScrollPause?.(0);
     });
     document.getElementById("sr-hud-minus")?.addEventListener("click", () => {
@@ -251,8 +251,11 @@
       window.StoryTTS?.adjustScrollSpeed?.(15);
     });
     document.getElementById("sr-hud-close")?.addEventListener("click", () => {
-      window.StoryTTS?.stopAutoScroll?.();
+      // HUD ✕ = tắt auto-scroll hẳn
       autoScrollEnabled = false;
+      try {
+        window.StoryTTS.stopAutoScroll();
+      } catch (e) {}
       const textEl = document.getElementById("sr-menu-scroll-text");
       if (textEl) textEl.textContent = "Auto-scroll";
       hideScrollHud();
@@ -359,26 +362,39 @@
 
   let bubbleIdleTimer = null;
 
+  /**
+   * Sau ~2.5s không hover/kéo:
+   * - Màn hẹp (≤640): class sr-idle-dim → chỉ giảm opacity (vẫn thấy + bấm được).
+   * - Desktop: class sr-idle-hide → trượt nửa bubble vào mép (cần dock trái/phải).
+   * Không cần đang dock để mờ trên màn hẹp.
+   */
   function scheduleBubbleIdle() {
     clearTimeout(bubbleIdleTimer);
-    bubble?.classList.remove("sr-idle-hide");
-    bubbleIdleTimer = setTimeout(() => {
+    if (!bubble) return;
+    bubble.classList.remove("sr-idle-hide", "sr-idle-dim");
+    bubbleIdleTimer = setTimeout(function () {
+      if (!bubble) return;
       if (menuOpen || ttsPanelOpen) return;
-      if (bubble?.classList.contains("sr-dragging")) return;
-      // Chỉ bỏ half-hide trên mobile thật hẹp
-      const vs = viewportSize();
-      if (vs.w <= 480) return;
-      if (
-        bubble?.classList.contains("sr-docked-left") ||
-        bubble?.classList.contains("sr-docked-right")
-      ) {
-        bubble.classList.add("sr-idle-hide");
+      if (bubble.classList.contains("sr-dragging")) return;
+      if (bubble.style.display === "none") return;
+      var vs = viewportSize();
+      if (vs.w <= 640) {
+        bubble.classList.add("sr-idle-dim");
+        return;
       }
+      // Desktop half-hide: tự gán dock theo vị trí nếu thiếu class
+      var rect = bubble.getBoundingClientRect();
+      var centerX = rect.left + rect.width / 2;
+      if (!bubble.classList.contains("sr-docked-left") && !bubble.classList.contains("sr-docked-right")) {
+        if (centerX < vs.w / 2) bubble.classList.add("sr-docked-left");
+        else bubble.classList.add("sr-docked-right");
+      }
+      bubble.classList.add("sr-idle-hide");
     }, 2500);
   }
 
   function wakeBubble() {
-    bubble?.classList.remove("sr-idle-hide");
+    bubble?.classList.remove("sr-idle-hide", "sr-idle-dim");
     scheduleBubbleIdle();
   }
 
@@ -409,7 +425,7 @@
       moved = false;
       activePointer = e.type;
       bubble.classList.add("sr-dragging");
-      bubble.classList.remove("sr-idle-hide", "sr-docked-left", "sr-docked-right");
+      bubble.classList.remove("sr-idle-hide", "sr-idle-dim", "sr-docked-left", "sr-docked-right");
       bubble.style.transition = "none";
       bubble.style.transform = "none";
 
@@ -549,7 +565,7 @@
     wakeBubble();
     // Mobile: kéo bubble vào trong viewport trước khi mở menu
     if (bubble && (window.innerWidth <= 640 || "ontouchstart" in window)) {
-      bubble.classList.remove("sr-idle-hide", "sr-docked-left", "sr-docked-right");
+      bubble.classList.remove("sr-idle-hide", "sr-idle-dim", "sr-docked-left", "sr-docked-right");
       const br = bubble.getBoundingClientRect();
       if (br.right > window.innerWidth - 8 || br.width < 30) {
         bubble.style.left = "auto";
@@ -1007,6 +1023,7 @@
             resumeIn: 0,
           });
         } else {
+          // Tắt auto-scroll từ menu = stop hẳn
           window.StoryTTS.stopAutoScroll?.();
           hideScrollHud();
         }
@@ -1092,11 +1109,19 @@
       });
 
     document.getElementById("sr-menu-stop")?.addEventListener("click", () => {
+      // Dừng HẲN: TTS + auto-scroll
       autoScrollEnabled = false;
       const textEl = document.getElementById("sr-menu-scroll-text");
       if (textEl) textEl.textContent = "Auto-scroll";
-      window.StoryTTS?.stop?.();
-      window.StoryTTS?.stopAutoScroll?.();
+      if (window.StoryTTS) {
+        window.StoryTTS.stopAutoScroll();
+        window.StoryTTS.stop();
+        // Gọi lần 2 phòng race với rAF
+        setTimeout(function () {
+          window.StoryTTS.stopAutoScroll();
+          window.StoryTTS.stop();
+        }, 50);
+      }
       hideScrollHud();
       syncPlayButton();
       updateBubbleActive();
@@ -1163,7 +1188,12 @@
 
     document.getElementById("sr-panel-stop")
       ?.addEventListener("click", () => {
+        autoScrollEnabled = false;
+        try {
+          window.StoryTTS.stopAutoScroll();
+        } catch (e) {}
         window.StoryTTS?.stop?.();
+        hideScrollHud();
         syncPlayButton();
         updateBubbleActive();
         if (window.StoryReaderUI?.updateProgress) {
@@ -1245,20 +1275,43 @@
       speechSynthesis.onvoiceschanged = populateVoices;
     }
 
-    // User cuộn tay → tạm dừng 2.5s rồi tự cuộn lại
+    /**
+     * User cuộn lên/xuống khi đang auto-scroll → tạm dừng ~3s rồi tự cuộn lại.
+     * - wheel / touchmove: LUÔN coi là user (scrollBy không tạo wheel).
+     * - event scroll: chỉ xử lý khi KHÔNG phải programmatic
+     *   (vì scrollTop do ta set cũng fire scroll, và cờ programmatic
+     *    bị reset timeout liên tục nên không tin cậy nếu check trên wheel).
+     * Nút "Dừng" vẫn stop hẳn (stopAutoScroll) — không đi qua hàm này.
+     */
     let userScrollTimer = null;
-    const onUserScrollIntent = (e) => {
-      if (!autoScrollEnabled) return;
-      if (window.StoryTTS?.isProgrammaticScroll?.()) return;
-      window.StoryTTS?.pauseAutoScroll?.(2.5);
+    function onUserScrollIntent(fromScrollEvent) {
+      var engineOn = !!window.StoryTTS?.autoScrollEnabled;
+      if (!autoScrollEnabled && !engineOn) return;
+      // Chỉ event "scroll" mới cần lọc programmatic
+      if (fromScrollEvent && window.StoryTTS?.isProgrammaticScroll?.()) return;
+      window.StoryTTS?.pauseAutoScroll?.(3);
       clearTimeout(userScrollTimer);
-      userScrollTimer = setTimeout(() => {
-        if (autoScrollEnabled) window.StoryTTS?.resumeAutoScroll?.();
-      }, 2500);
-    };
-    window.addEventListener("wheel", onUserScrollIntent, { passive: true });
-    // touchmove: chỉ khi user vuốt (không phải programmatic)
-    let touchPauseArmed = false;
+      userScrollTimer = setTimeout(function () {
+        if (window.StoryTTS?.autoScrollEnabled) {
+          window.StoryTTS.resumeAutoScroll?.();
+        }
+      }, 3000);
+    }
+    window.addEventListener(
+      "wheel",
+      function () {
+        onUserScrollIntent(false);
+      },
+      { passive: true, capture: true }
+    );
+    document.addEventListener(
+      "scroll",
+      function () {
+        onUserScrollIntent(true);
+      },
+      { passive: true, capture: true }
+    );
+    var touchPauseArmed = false;
     window.addEventListener(
       "touchstart",
       function () {
@@ -1271,7 +1324,7 @@
       function () {
         if (!touchPauseArmed) return;
         touchPauseArmed = false;
-        onUserScrollIntent();
+        onUserScrollIntent(false);
       },
       { passive: true }
     );
@@ -1353,7 +1406,8 @@
     if (menu) menu.style.display = "";
     if (bubble) {
       bubble.style.display = "flex";
-      bubble.classList.remove("sr-idle-hide");
+      // Hiện rõ khi vừa bật; scheduleBubbleIdle sẽ mờ/half-hide sau 2.5s
+      bubble.classList.remove("sr-idle-hide", "sr-idle-dim");
       if (!localStorage.getItem("sr-bubble-pos")) {
         bubble.style.right = "12px";
         bubble.style.bottom = "100px";
@@ -1363,7 +1417,7 @@
       } else {
         restoreDockClass();
       }
-      wakeBubble();
+      wakeBubble(); // bắt đầu đếm idle → dim / half-hide
     }
     if (bubble && !bubble.dataset.srDragBound) {
       ensureCtrlElements();

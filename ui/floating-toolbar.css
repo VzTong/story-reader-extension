@@ -96,6 +96,16 @@ body.sr-theme-light {
   transform: translateX(0);
   opacity: 1;
 }
+/* Màn hẹp: chỉ mờ (rõ), không trượt nửa bubble */
+#sr-bubble.sr-idle-dim {
+  opacity: 0.35 !important;
+  transform: none !important;
+  transition: opacity 0.35s ease !important;
+}
+#sr-bubble.sr-idle-dim:hover,
+#sr-bubble.sr-idle-dim:active {
+  opacity: 1 !important;
+}
 #sr-bubble.sr-dragging {
   transform: none !important;
   opacity: 1 !important;

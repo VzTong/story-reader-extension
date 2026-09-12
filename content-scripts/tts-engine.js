@@ -1,17 +1,29 @@
 /**
  * TTS Engine — đọc truyện bằng giọng nói + tự cuộn trang.
  *
- * Trách nhiệm chính:
- * - Tách nội dung chương thành câu, xếp hàng đợi phát (Web Speech hoặc Google TTS).
- * - Highlight câu đang đọc, nhảy câu (Go to #), rate / pitch / ngữ cảnh (nghỉ giữa câu).
- * - Auto-scroll mượt (requestAnimationFrame), tạm dừng khi user cuộn tay, resume sau ~2.5s.
- * - Hết chương: next URL (site thường) hoặc đọc tiếp content lazy-load (Webnovel).
- * - Manga/truyện tranh: cuộn trong container reader; next chapter nếu có nút.
+ * == Luồng đọc (TTS) ==
+ * 1. startFromPage() gọi StoryDetector lấy text chương → splitIntoSentences.
+ * 2. speakQueue(sentences, startIndex) xếp hàng; speakNext() phát từng câu.
+ * 3. Engine: "web" = speechSynthesis; "google" = background fetch audio (Blob).
+ * 4. Hết hàng đợi: site infinite (webnovel) → continueInfiniteReading();
+ *    site thường → goNextChapter("tts") nếu bật auto-next.
  *
- * API public: window.StoryTTS (togglePlay, startFromPage, pause, stop, jumpTo, …).
- * Phụ thuộc: window.StoryDetector (lấy text trang), window.StoryReaderUI (cập nhật UI).
- * Cài đặt lưu localStorage (sr-rate, sr-pitch, sr-context, sr-tts-engine, …).
+ * == Luồng auto-scroll ==
+ * - startAutoScroll(): vòng requestAnimationFrame, cộng scrollTop/window theo px/s.
+ * - User cuộn tay → pauseAutoScroll(giây) → resumeAutoScroll().
+ * - Gần đáy: infinite thì hích chờ load; manga thì next link hoặc hích;
+ *   site thường thì goNextChapter("scroll").
+ *
+ * == Biến trạng thái quan trọng ==
+ * - currentUtterances / currentIndex: hàng đợi câu và vị trí đang đọc.
+ * - isSpeaking / isPaused: đang phát hay tạm dừng.
+ * - autoScrollEnabled / scrollPaused: đang tự cuộn hay user vừa can thiệp.
+ * - srProgrammaticScroll: true khi chính ta cuộn (tránh coi là user-scroll).
+ *
+ * API: window.StoryTTS — xem object export cuối file.
+ * Phụ thuộc: StoryDetector, StoryReaderUI, chrome.runtime (Google TTS).
  */
+
 (function () {
   "use strict";
 
@@ -146,8 +158,32 @@
   /* ---------- highlight (sentence spans) ---------- */
   let wrapped = false;
 
+  /**
+   * Root DOM để wrap/highlight câu.
+   * Webnovel: KHÔNG lấy .cha-content đầu tiên (chỉ chapter 1) —
+   * lấy container cha chứa mọi chapter đã load, hoặc body.
+   */
   function getContentRoot() {
+    var host = (location.hostname || "").toLowerCase();
+    if (host.indexOf("webnovel") !== -1) {
+      var multi = document.querySelectorAll(".cha-words, .cha-content");
+      if (multi.length > 1) {
+        // Tổ tiên chung gần nhất của block đầu & cuối
+        try {
+          var a = multi[0];
+          var b = multi[multi.length - 1];
+          var path = [];
+          for (var x = a; x; x = x.parentElement) path.push(x);
+          for (var y = b; y; y = y.parentElement) {
+            if (path.indexOf(y) !== -1) return y;
+          }
+        } catch (e) {}
+        return document.body;
+      }
+      if (multi.length === 1) return multi[0].closest(".cha-content") || multi[0];
+    }
     const selectors = [
+      ".cha-words",
       ".cha-content",
       ".chapter_content",
       ".novel-content",
@@ -205,14 +241,24 @@
     return nodes;
   }
 
-  function wrapSentencesInPage(sentences) {
+  /**
+   * Bọc mỗi câu trong <span class="sr-sent" data-sr-idx="i"> để tô + scrollIntoView.
+   * @param fromIndex — ưu tiên wrap từ đây đến hết trước (chapter mới), rồi wrap phần đầu.
+   */
+  function wrapSentencesInPage(sentences, fromIndex) {
     unwrapSentences();
     if (!sentences || !sentences.length) return;
     const root = getContentRoot();
     if (!root) return;
 
-    // Wrap từng câu, refresh text nodes sau mỗi lần (tránh lệch câu 1/2)
-    for (let i = 0; i < sentences.length; i++) {
+    var startFrom = Math.max(0, parseInt(fromIndex, 10) || 0);
+    // Thứ tự: đoạn đang đọc → cuối, rồi 0 → startFrom (để chapter mới có span trước)
+    var order = [];
+    for (var a = startFrom; a < sentences.length; a++) order.push(a);
+    for (var b = 0; b < startFrom; b++) order.push(b);
+
+    for (let oi = 0; oi < order.length; oi++) {
+      let i = order[oi];
       const full = (sentences[i] || "").trim();
       if (full.length < 2) continue;
 
@@ -870,10 +916,11 @@
 
     pageLang = detectPageLanguage(sentences.slice(0, 5).join(" "));
 
+    // Wrap span trên trang để highlight + scroll-follow (cần root đúng mọi chapter)
     try {
-      wrapSentencesInPage(sentences);
-    } catch (e) {
-      console.warn("[TTS] wrap sentences:", e);
+      wrapSentencesInPage(sentences, startIndex);
+    } catch (errW) {
+      console.warn("[TTS] wrap sentences:", errW);
     }
 
     if (window.StoryReaderUI?.buildSentenceList) {
@@ -960,19 +1007,39 @@
     return 0;
   }
 
+  /**
+   * Webnovel / site infinite-scroll chapter:
+   * Đọc hết list hiện tại → cuộn để site load chapter kế → tách lại câu →
+   * tìm vị trí sau câu cuối đã đọc → speakQueue từ đó.
+   */
   async function continueInfiniteReading() {
     if (!window.StoryDetector) return;
     try {
       var prevLen = (currentUtterances && currentUtterances.length) || 0;
       var prevLast = prevLen ? currentUtterances[prevLen - 1] : "";
-      // Cuộn + chờ webnovel lazy-load chapter
-      for (var n = 0; n < 4; n++) {
-        window.scrollBy(0, 350);
+      var prevTextLen = 0;
+      try {
+        var prevDetect = window.StoryDetector.detectContent();
+        prevTextLen = (prevDetect && prevDetect.text && prevDetect.text.length) || 0;
+      } catch (e1) {}
+
+      // Cuộn mạnh + chờ DOM load (webnovel lazy)
+      for (var n = 0; n < 6; n++) {
+        window.scrollBy(0, 500);
         await new Promise(function (r) {
-          setTimeout(r, 700);
+          setTimeout(r, 600);
         });
       }
-      var result = window.StoryDetector.detectContent();
+      // Chờ content dài hơn (tối đa ~5s)
+      var result = null;
+      for (var w = 0; w < 10; w++) {
+        result = window.StoryDetector.detectContent();
+        if (result && result.text && result.text.length > prevTextLen + 80) break;
+        window.scrollBy(0, 300);
+        await new Promise(function (r) {
+          setTimeout(r, 500);
+        });
+      }
       if (!result || !result.text || result.text.length < 40) {
         console.log("[TTS] Infinite: không có content");
         window.StoryReaderUI?.setPlaying?.(false);
@@ -984,48 +1051,104 @@
         return;
       }
 
+      /**
+       * Tìm điểm bắt đầu chapter mới:
+       * - KHÔNG lấy match cuối (key ngắn khớp nhiều lần → nhảy gần cuối ch.2).
+       * - Ưu tiên: câu cuối đã đọc khớp FULL hoặc prefix dài → lấy LẦN ĐẦU tiên + 1.
+       * - Hoặc: câu đầu tiên không có trong prevSet (append model).
+       */
       var startIdx = 0;
       var found = false;
+
+      // 1) First-match của câu cuối đã đọc (key dài trước)
       if (prevLast) {
-        var key = prevLast.slice(0, 48).trim();
-        var key2 = prevLast.slice(0, 28).trim();
-        for (var i = 0; i < sentences.length; i++) {
-          var s = sentences[i];
-          if (
-            (key.length >= 10 && s.indexOf(key) !== -1) ||
-            (key2.length >= 10 && s.indexOf(key2) !== -1)
-          ) {
-            startIdx = i + 1;
-            found = true;
+        var keys = [
+          prevLast.trim(),
+          prevLast.slice(0, 60).trim(),
+          prevLast.slice(0, 40).trim(),
+        ];
+        for (var k = 0; k < keys.length && !found; k++) {
+          if (keys[k].length < 12) continue;
+          for (var i = 0; i < sentences.length; i++) {
+            var s = sentences[i];
+            if (s === keys[k] || s.indexOf(keys[k]) === 0 || keys[k].indexOf(s) === 0) {
+              startIdx = i + 1;
+              found = true;
+              break; // chỉ lần khớp đầu
+            }
+          }
+        }
+        // prefix chứa key (lỏng hơn) — vẫn first match, tìm quanh prevLen
+        if (!found) {
+          var key = prevLast.slice(0, 28).trim();
+          if (key.length >= 12) {
+            var from = Math.max(0, prevLen - 15);
+            var to = Math.min(sentences.length, prevLen + 40);
+            for (var j = from; j < to; j++) {
+              if (sentences[j].indexOf(key) !== -1) {
+                startIdx = j + 1;
+                found = true;
+                break;
+              }
+            }
           }
         }
       }
-      // Content dài hơn trước → chapter mới append
-      if (!found && sentences.length > prevLen + 3) {
-        startIdx = Math.min(sentences.length - 1, prevLen);
+
+      // 2) Câu đầu tiên không thuộc tập đã đọc (so khớp gần đúng)
+      if (!found && prevLen > 0) {
+        var prevSet = {};
+        for (var p = 0; p < currentUtterances.length; p++) {
+          prevSet[currentUtterances[p].slice(0, 32)] = true;
+        }
+        for (var n = 0; n < sentences.length; n++) {
+          if (!prevSet[sentences[n].slice(0, 32)]) {
+            // Bỏ qua nhiễu đầu list nếu vẫn còn trùng phần lớn
+            if (n >= Math.max(0, prevLen - 2) || sentences.length > prevLen + 5) {
+              startIdx = n;
+              found = true;
+              break;
+            }
+          }
+        }
+      }
+
+      // 3) Append thuần: list dài hơn → bắt đầu tại prevLen
+      if (!found && sentences.length > prevLen) {
+        startIdx = prevLen;
         found = true;
       }
+
       if (!found) {
-        try {
-          wrapSentencesInPage(sentences);
-        } catch (err) {}
-        startIdx = findIndexNearViewport(sentences);
+        // Không ước lượng viewport (dễ nhảy cuối trang) — dừng để user chọn
+        console.log("[TTS] Infinite: không xác định được đoạn mới");
+        window.StoryReaderUI?.setPlaying?.(false);
+        return;
       }
+      if (startIdx < 0) startIdx = 0;
       if (startIdx >= sentences.length) {
         console.log("[TTS] Infinite: không còn câu mới");
         window.StoryReaderUI?.setPlaying?.(false);
         return;
       }
-      // Tránh đọc lại từ đầu cùng một bộ câu
       if (startIdx === 0 && prevLen > 5 && sentences.length <= prevLen + 2) {
-        console.log("[TTS] Infinite: content chưa đổi, dừng");
+        // Content không tăng: thử nút next trong reader (một số skin webnovel)
+        console.log("[TTS] Infinite: content chưa đổi — thử next button");
+        var nextBtn = findNextChapterLink();
+        if (nextBtn) {
+          goNextChapter("tts");
+          return;
+        }
         window.StoryReaderUI?.setPlaying?.(false);
         return;
       }
       console.log("[TTS] Infinite continue @" + startIdx + "/" + sentences.length);
+      isSpeaking = true;
+      window.StoryReaderUI?.setPlaying?.(true);
       speakQueue(sentences, startIdx);
     } catch (err) {
       console.warn("[TTS] continueInfiniteReading", err);
+      window.StoryReaderUI?.setPlaying?.(false);
     }
   }
 
@@ -1217,11 +1340,13 @@
   /* ---------- auto-scroll (kagane-style continuous, px/s) ---------- */
   let scrollPaused = false;
   let srProgrammaticScroll = false;
+  let scrollKill = false; // true sau stop — chặn resume/rAF
   let resumeTimer = null;
   let resumeCountdown = 0;
   // scrollSpeed stored as px/s (default 135)
   scrollSpeed = parseFloat(localStorage.getItem("sr-scroll-px") || "135") || 135;
 
+  /** Hủy interval/rAF/timeout liên quan auto-scroll (kể cả lịch resume sau pause 3s). */
   function stopAutoScrollTimer() {
     if (autoScrollTimer) {
       clearInterval(autoScrollTimer);
@@ -1234,6 +1359,11 @@
     if (resumeTimer) {
       clearInterval(resumeTimer);
       resumeTimer = null;
+    }
+    // Quan trọng: xóa timeout resume — nếu không, sau khi bấm Dừng vẫn tự cuộn lại
+    if (window.__srResumeTimeout) {
+      clearTimeout(window.__srResumeTimeout);
+      window.__srResumeTimeout = null;
     }
   }
 
@@ -1424,42 +1554,56 @@
     return cachedScrollRoot;
   }
 
+  /**
+   * Một frame auto-scroll.
+   * - Tích lũy px theo thời gian thực (tránh giật do setInterval lệch nhịp).
+   * - Chỉ kiểm tra "gần đáy" mỗi ~400ms (tránh layout thrash trên manga).
+   * - srProgrammaticScroll bật trong lúc ta cuộn để listener user-scroll bỏ qua.
+   */
   function tickScrollFrame() {
     scrollRafId = null;
-    if (!autoScrollEnabled) return;
+    if (!autoScrollEnabled || scrollKill) return;
     if (!scrollPaused) {
-      // px/s → tích lũy theo thời gian thực (mượt hơn setInterval)
       var now = performance.now();
       if (!tickScrollFrame._last) tickScrollFrame._last = now;
-      var dt = Math.min(0.05, (now - tickScrollFrame._last) / 1000);
+      var dt = Math.min(0.064, (now - tickScrollFrame._last) / 1000);
       tickScrollFrame._last = now;
       scrollAccum += scrollSpeed * dt;
+      // Bước tối thiểu 1px; gộp nhiều frame nếu tốc độ thấp → mượt hơn
       var step = Math.floor(scrollAccum);
       if (step >= 1) {
         scrollAccum -= step;
         var root = getCachedScrollRoot();
+        // Đánh dấu programmatic trong cùng frame + 1 frame sau (đủ để lọc event scroll giả).
+        // KHÔNG giữ 200ms liên tục — nếu giữ, wheel của user bị ignore suốt lúc auto-scroll.
         srProgrammaticScroll = true;
         try {
           if (root && root !== document.documentElement && root !== document.body) {
-            root.scrollTop += step;
+            root.scrollTop = root.scrollTop + step;
           } else {
             window.scrollBy(0, step);
           }
         } catch (err) {
           window.scrollBy(0, step);
         }
-        clearTimeout(window.__srProgScrollT);
-        window.__srProgScrollT = setTimeout(function () {
-          srProgrammaticScroll = false;
-        }, 150);
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            srProgrammaticScroll = false;
+          });
+        });
       }
-      if (isNearPageBottom()) {
-        handleReachedBottom();
-      } else {
-        reachedBottomOnce = false;
-        if (bottomWatchTimer) {
-          clearTimeout(bottomWatchTimer);
-          bottomWatchTimer = null;
+      // Throttle check đáy trang
+      if (!tickScrollFrame._lastBottomCheck) tickScrollFrame._lastBottomCheck = 0;
+      if (now - tickScrollFrame._lastBottomCheck > 400) {
+        tickScrollFrame._lastBottomCheck = now;
+        if (isNearPageBottom()) {
+          handleReachedBottom();
+        } else {
+          reachedBottomOnce = false;
+          if (bottomWatchTimer) {
+            clearTimeout(bottomWatchTimer);
+            bottomWatchTimer = null;
+          }
         }
       }
     } else {
@@ -1474,7 +1618,9 @@
     // legacy no-op — dùng rAF
   }
 
+  /** Bật auto-scroll liên tục (px/s). User cuộn tay → pauseAutoScroll, không phải stop. */
   function startAutoScroll() {
+    scrollKill = false;
     autoScrollEnabled = true;
     scrollPaused = false;
     resumeCountdown = 0;
@@ -1494,41 +1640,54 @@
     });
   }
 
+  /**
+   * Tạm dừng auto-scroll (user vừa cuộn tay).
+   * @param {number} autoResumeSec — sau bao nhiêu giây tự resume (vd 3).
+   */
   function pauseAutoScroll(autoResumeSec) {
     if (!autoScrollEnabled) return;
     scrollPaused = true;
-    resumeCountdown = 0;
     if (resumeTimer) {
       clearInterval(resumeTimer);
       resumeTimer = null;
     }
+    if (window.__srResumeTimeout) {
+      clearTimeout(window.__srResumeTimeout);
+      window.__srResumeTimeout = null;
+    }
+    // autoResumeSec > 0 → tạm dừng rồi tự resume; <=0 hoặc NaN → pause giữ nguyên (nút ⏸)
+    var sec = parseFloat(autoResumeSec);
+    var shouldResume = !isNaN(sec) && sec > 0;
+    var totalMs = shouldResume ? Math.max(500, sec * 1000) : 0;
+    resumeCountdown = shouldResume ? Math.ceil(totalMs / 1000) : 0;
     window.StoryReaderUI?.onScrollState?.({
       active: true,
       paused: true,
       pxPerSec: Math.round(scrollSpeed),
-      resumeIn: 0,
+      resumeIn: resumeCountdown,
     });
-    if (autoResumeSec && autoResumeSec > 0) {
-      resumeCountdown = autoResumeSec;
-      resumeTimer = setInterval(function () {
-        resumeCountdown -= 1;
-        window.StoryReaderUI?.onScrollState?.({
-          active: true,
-          paused: true,
-          pxPerSec: Math.round(scrollSpeed),
-          resumeIn: resumeCountdown,
-        });
-        if (resumeCountdown <= 0) {
-          clearInterval(resumeTimer);
-          resumeTimer = null;
-          resumeAutoScroll();
-        }
-      }, 1000);
-    }
+    if (!shouldResume) return; // HUD ⏸: dừng cuộn đến khi bấm lại / resume
+    resumeTimer = setInterval(function () {
+      resumeCountdown -= 1;
+      window.StoryReaderUI?.onScrollState?.({
+        active: true,
+        paused: true,
+        pxPerSec: Math.round(scrollSpeed),
+        resumeIn: Math.max(0, resumeCountdown),
+      });
+      if (resumeCountdown <= 0) {
+        clearInterval(resumeTimer);
+        resumeTimer = null;
+      }
+    }, 1000);
+    window.__srResumeTimeout = setTimeout(function () {
+      window.__srResumeTimeout = null;
+      if (!scrollKill) resumeAutoScroll();
+    }, totalMs);
   }
 
   function resumeAutoScroll() {
-    if (!autoScrollEnabled) return;
+    if (!autoScrollEnabled || scrollKill) return;
     scrollPaused = false;
     resumeCountdown = 0;
     if (resumeTimer) {
@@ -1567,11 +1726,23 @@
     setScrollPxPerSec(scrollSpeed + delta);
   }
 
+  /** Dừng hẳn auto-scroll (nút Dừng / hết trang không next). Khác với pause tạm 3s. */
+  /**
+   * Dừng hẳn auto-scroll (nút Dừng / HUD ✕ / tắt menu).
+   * Khác pauseAutoScroll: không tự resume sau 3s.
+   */
   function stopAutoScroll() {
+    // Chặn mọi resume/rAF còn sót
+    scrollKill = true;
     autoScrollEnabled = false;
     scrollPaused = false;
     resumeCountdown = 0;
+    reachedBottomOnce = false;
     stopAutoScrollTimer();
+    if (bottomWatchTimer) {
+      clearTimeout(bottomWatchTimer);
+      bottomWatchTimer = null;
+    }
     if (!isSpeaking) releaseWakeLock();
     window.StoryReaderUI?.onScrollState?.({
       active: false,
