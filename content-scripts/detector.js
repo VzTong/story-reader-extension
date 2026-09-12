@@ -1,4 +1,14 @@
-// content-scripts/detector.js
+/**
+ * Content detector — tìm và làm sạch nội dung chương trên trang truyện.
+ *
+ * Luồng:
+ * 1) Mozilla Readability trên clone document (ưu tiên).
+ * 2) Fallback selector CSS theo từng kiểu site (Webnovel, WordPress, nguontruyen…).
+ * 3) cleanText: bỏ UI rác (gift, ranking, ngày, nút điều hướng…).
+ *
+ * API: window.StoryDetector.detectContent() / waitForContent(timeoutMs)
+ * Trả về { title, text, source } hoặc null.
+ */
 
 function cleanText(text) {
   if (!text) return "";

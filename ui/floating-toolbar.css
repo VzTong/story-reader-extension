@@ -1,4 +1,9 @@
-/* Story Reader UI — clean, kagane + sangtacviet inspired */
+/**
+ * Styles cho bubble, mini-menu, panel TTS, HUD auto-scroll.
+ * Design: nền tối + accent cyan #00e5ff (cyberpunk / kagane-like).
+ * Theme sáng: body.sr-theme-light đổi CSS variables.
+ * Mobile (max-width 480px): panel dạng card dưới màn hình.
+ */
 
 :root {
   --sr-bg: #0d1117;
@@ -1046,18 +1051,10 @@ body.sr-theme-light #sr-goto-btn {
 
 
 /* Disable idle-hide cut on narrow / device mode */
-@media (max-width: 900px) {
+@media (max-width: 480px) {
   #sr-bubble.sr-idle-hide.sr-docked-right,
   #sr-bubble.sr-idle-hide.sr-docked-left {
     transform: none !important;
     opacity: 1 !important;
-  }
-  #sr-bubble.sr-docked-right {
-    right: 10px !important;
-    left: auto !important;
-  }
-  #sr-bubble.sr-docked-left {
-    left: 10px !important;
-    right: auto !important;
   }
 }

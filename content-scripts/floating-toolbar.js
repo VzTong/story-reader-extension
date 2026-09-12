@@ -1,5 +1,16 @@
-// ===== Story Reader – Floating Bubble (Ejoy + Cyberpunk) =====
-
+/**
+ * Floating UI — bubble, menu nhanh, panel danh sách câu + cài đặt, HUD auto-scroll.
+ *
+ * Trách nhiệm chính:
+ * - Tạo bubble kéo thả (dock trái/phải, idle half-hide trên desktop).
+ * - Menu: Auto-scroll, Nghe TTS, Danh sách câu, Highlight, Theme, Cài đặt, Dừng.
+ * - Panel TTS: list câu, Go to #, engine giọng (máy / Google), slider rate-pitch-context-scroll.
+ * - HUD tốc độ cuộn phía trên bubble; đồng bộ nút play/pause với StoryTTS.
+ * - Chỉ hiện bubble sau khi popup gửi SHOW_TOOLBAR (không tự hiện lúc load trang).
+ *
+ * API public: window.StoryReaderUI (showToolbar, setPlaying, buildSentenceList, …).
+ * Style: ui/floating-toolbar.css — token màu --sr-accent #00e5ff.
+ */
 (function () {
   "use strict";
 
@@ -354,9 +365,9 @@
     bubbleIdleTimer = setTimeout(() => {
       if (menuOpen || ttsPanelOpen) return;
       if (bubble?.classList.contains("sr-dragging")) return;
-      // Mobile / DevTools device mode: không half-hide (bubble bị cắt)
+      // Chỉ bỏ half-hide trên mobile thật hẹp
       const vs = viewportSize();
-      if (vs.w <= 900 || "ontouchstart" in window) return;
+      if (vs.w <= 480) return;
       if (
         bubble?.classList.contains("sr-docked-left") ||
         bubble?.classList.contains("sr-docked-right")
@@ -466,6 +477,8 @@
       scheduleBubbleIdle();
     };
 
+    // ensure transform cleared path exists
+
     bubble.addEventListener("mousedown", onStart);
     bubble.addEventListener("touchstart", onStart, { passive: false });
 
@@ -480,6 +493,7 @@
     if (!bubble) return;
     const rect = bubble.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
+    bubble.style.transform = "";
     bubble.classList.remove("sr-docked-left", "sr-docked-right");
     if (centerX < window.innerWidth / 2) {
       bubble.classList.add("sr-docked-left");
@@ -493,21 +507,23 @@
     const vs = viewportSize();
     const centerX = rect.left + rect.width / 2;
     const isLeft = centerX < vs.w / 2;
-    // Device mode / mobile: mép 10px, không flush 0 (tránh bubble bị cắt)
-    const edge = vs.w <= 900 ? 10 : 0;
+    // Mobile hẹp: mép 10px; desktop: 0 để half-hide hoạt động
+    const edge = vs.w <= 480 ? 10 : 0;
 
     bubble.classList.remove("sr-docked-left", "sr-docked-right", "sr-idle-hide");
+    // Xóa transform inline (nếu còn) để CSS idle-hide chạy được
+    bubble.style.transform = "";
+    bubble.style.transition = "";
 
     if (isLeft) {
       bubble.style.left = edge + "px";
       bubble.style.right = "auto";
-      if (edge === 0) bubble.classList.add("sr-docked-left");
+      bubble.classList.add("sr-docked-left");
     } else {
       bubble.style.left = "auto";
       bubble.style.right = edge + "px";
-      if (edge === 0) bubble.classList.add("sr-docked-right");
+      bubble.classList.add("sr-docked-right");
     }
-    // Giữ top trong khung
     let top = rect.top;
     top = Math.max(8, Math.min(top, vs.h - 52));
     bubble.style.top = top + "px";
@@ -1229,27 +1245,33 @@
       speechSynthesis.onvoiceschanged = populateVoices;
     }
 
-    // Kagane-like: lướt chuột/touch → tạm dừng, ~2s sau tự cuộn tiếp
+    // User cuộn tay → tạm dừng 2.5s rồi tự cuộn lại
     let userScrollTimer = null;
-    const onUserScrollIntent = () => {
+    const onUserScrollIntent = (e) => {
       if (!autoScrollEnabled) return;
-      // Bỏ qua scroll do chính extension tạo ra (tránh ngắt 2s trên kagane)
       if (window.StoryTTS?.isProgrammaticScroll?.()) return;
-      window.StoryTTS?.pauseAutoScroll?.(2);
+      window.StoryTTS?.pauseAutoScroll?.(2.5);
       clearTimeout(userScrollTimer);
       userScrollTimer = setTimeout(() => {
         if (autoScrollEnabled) window.StoryTTS?.resumeAutoScroll?.();
-      }, 2000);
+      }, 2500);
     };
     window.addEventListener("wheel", onUserScrollIntent, { passive: true });
-    // Không bind touchmove toàn cục — trên manga/kagane dễ false-pause ~2s
+    // touchmove: chỉ khi user vuốt (không phải programmatic)
+    let touchPauseArmed = false;
     window.addEventListener(
       "touchstart",
-      function (e) {
-        if (!autoScrollEnabled) return;
-        if (window.StoryTTS?.isProgrammaticScroll?.()) return;
-        // chỉ pause khi user chạm (không phải programmatic)
-        if (e.touches && e.touches.length) window.StoryTTS?.pauseAutoScroll?.(2);
+      function () {
+        touchPauseArmed = true;
+      },
+      { passive: true }
+    );
+    window.addEventListener(
+      "touchmove",
+      function () {
+        if (!touchPauseArmed) return;
+        touchPauseArmed = false;
+        onUserScrollIntent();
       },
       { passive: true }
     );

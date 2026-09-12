@@ -1,4 +1,11 @@
-// Story Reader — background (Google TTS proxy + messaging)
+/**
+ * Background service worker (Manifest V3).
+ *
+ * - GOOGLE_TTS: fetch audio từ endpoint Translate công khai (tránh CORS trên trang),
+ *   trả base64 cho content script phát bằng Audio + Blob.
+ * - PING: kiểm tra worker còn sống.
+ * Không cần API key Google Cloud; endpoint free có thể bị 403/giới hạn.
+ */
 console.log("[Story Reader] background service worker loaded");
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
