@@ -1,30 +1,25 @@
 /**
- * Module dịch trang (Giai đoạn 4 — MyMemory).
- *
- * Luồng:
- * 1) collectTextNodes(): TreeWalker lấy text node trong vùng nội dung (bỏ script/style/UI extension).
- * 2) chunkBySize(): gộp ≤500 ký tự/request (giới hạn MyMemory).
- * 3) translatePage(targetLang): gọi background MYMEMORY_TRANSLATE, ghi đè nodeValue.
- * 4) originalTextMap (WeakMap): lưu bản gốc để undo / toggle.
+ * Module dịch trang — giữ layout bằng cách dịch theo khối DOM (p, h1, li…).
  *
  * API: window.StoryTranslator
- *  - translatePage(targetLang)  targetLang mặc định "vi"
- *  - restoreOriginal()
- *  - toggleOriginal()
- *  - isTranslated()
- *
- * Giới hạn MyMemory: ~500 ký tự/request, ~5000 ký tự/ngày (ẩn danh).
+ *  - translatePage(targetLang)
+ *  - restoreOriginal() / toggleOriginal()
+ *  - isTranslated() / isTranslateWanted()
+ *  - startAutoTranslateObserver()
  */
 (function () {
   "use strict";
 
-  /** @type {WeakMap<Text, string>} */
-  var originalTextMap = new WeakMap();
-  /** Danh sách node đã đụng tới trong lần dịch gần nhất (WeakMap không iterate được) */
-  var touchedNodes = [];
+  /** element → { html or text, mode } */
+  var originalMap = new Map();
+  var translatedEls = [];
   var showingOriginal = false;
   var isBusy = false;
+  var abortFlag = false;
+  var translateWanted = false;
   var dailyCharsKey = "sr-translate-chars-" + new Date().toISOString().slice(0, 10);
+  var autoObs = null;
+  var observerTimer = null;
 
   function getDailyChars() {
     try {
@@ -33,107 +28,112 @@
       return 0;
     }
   }
-
   function addDailyChars(n) {
     try {
       localStorage.setItem(dailyCharsKey, String(getDailyChars() + n));
     } catch (e) {}
   }
 
-  /**
-   * Lấy root nội dung — ưu tiên StoryDetector / selector chương, fallback body.
-   */
   function getTranslateRoot() {
-    if (window.StoryDetector && window.StoryDetector.detectContent) {
-      // Không dựa text; lấy DOM
-    }
     var sels = [
-      ".cha-words",
-      ".cha-content",
+      // nguontruyen / wordpress novel
+      ".chapter-c",
+      "#chapter-content",
+      ".box-chap",
+      ".content-chapter",
       ".chapter-content",
-      ".chapter_content",
+      "#chapterContent",
+      ".reading-content",
+      ".text-left",
       "div.entry-content",
-      "article .post-content",
+      "article .entry-content",
+      // webnovel / orv
       "article",
       "main",
+      ".cha-words",
+      ".cha-content",
+      ".prose",
+      ".post-content",
       "#content",
+      "[class*='chapter-content']",
+      "[class*='chapter_content']",
+      "[class*='reader']",
     ];
+    var best = null;
+    var bestLen = 0;
     for (var i = 0; i < sels.length; i++) {
-      var el = document.querySelector(sels[i]);
-      if (el && (el.innerText || "").trim().length > 80) return el;
-    }
-    return document.body;
-  }
-
-  /**
-   * Duyệt text node có thể dịch (bỏ UI extension, script, input…).
-   */
-  function collectTextNodes(root) {
-    root = root || getTranslateRoot();
-    var out = [];
-    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-      acceptNode: function (node) {
-        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
-        var p = node.parentElement;
-        if (!p) return NodeFilter.FILTER_REJECT;
-        if (p.closest("[id^='sr-']") || p.closest("#sr-bubble") || p.closest("#sr-menu") || p.closest("#sr-tts-panel"))
-          return NodeFilter.FILTER_REJECT;
-        var tag = p.tagName;
-        if (
-          tag === "SCRIPT" ||
-          tag === "STYLE" ||
-          tag === "NOSCRIPT" ||
-          tag === "TEXTAREA" ||
-          tag === "INPUT" ||
-          tag === "CODE" ||
-          tag === "PRE"
-        )
-          return NodeFilter.FILTER_REJECT;
-        // Bỏ text quá ngắn (ký tự trang trí)
-        if (node.nodeValue.trim().length < 2) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
-    while (walker.nextNode()) out.push(walker.currentNode);
-    return out;
-  }
-
-  /**
-   * Gộp text node thành batch ≤ maxLen ký tự (MyMemory: 500).
-   * Mỗi item: { nodes: Text[], text: string }
-   */
-  function chunkBySize(nodes, maxLen) {
-    maxLen = maxLen || 500;
-    var batches = [];
-    var curNodes = [];
-    var curText = "";
-    for (var i = 0; i < nodes.length; i++) {
-      var piece = nodes[i].nodeValue;
-      if ((curText + piece).length > maxLen && curText.length > 0) {
-        batches.push({ nodes: curNodes, text: curText });
-        curNodes = [];
-        curText = "";
-      }
-      // Node đơn lẻ dài hơn maxLen → cắt gửi từng khúc (ghi đè cả node bằng bản dịch ghép)
-      if (piece.length > maxLen) {
-        if (curText) {
-          batches.push({ nodes: curNodes, text: curText });
-          curNodes = [];
-          curText = "";
+      var nodes = document.querySelectorAll(sels[i]);
+      for (var j = 0; j < nodes.length; j++) {
+        var el = nodes[j];
+        if (el.closest && el.closest("[id^='sr-']")) continue;
+        var len = ((el.innerText || "").trim()).length;
+        if (len > bestLen && len > 80) {
+          bestLen = len;
+          best = el;
         }
-        batches.push({ nodes: [nodes[i]], text: piece.slice(0, maxLen) });
-        continue;
       }
-      curNodes.push(nodes[i]);
-      curText += piece;
     }
-    if (curText) batches.push({ nodes: curNodes, text: curText });
-    return batches;
+    return best || document.body;
   }
 
   /**
-   * Gọi background MyMemory.
+   * Các khối hiển thị — mỗi khối = 1 đơn vị dịch → giữ khoảng cách/layout.
+   * Không lấy div lồng nhau (chỉ leaf-ish block).
    */
+  function collectBlocks(root) {
+    root = root || getTranslateRoot();
+    var sel =
+      "p, h1, h2, h3, h4, h5, h6, li, blockquote, figcaption, td, th, pre, dt, dd, summary";
+    var list = [];
+    var seen = new Set();
+    root.querySelectorAll(sel).forEach(function (el) {
+      if (el.closest && el.closest("[id^='sr-']")) return;
+      if (seen.has(el)) return;
+      // Bỏ khối chỉ chứa khối con cùng loại (tránh dịch 2 lần)
+      var childBlock = el.querySelector(sel);
+      if (childBlock && el.tagName !== "LI") {
+        // vẫn lấy nếu text trực tiếp ngoài child
+      }
+      var text = (el.innerText || "").trim();
+      if (text.length < 3) return;
+      // Bỏ navigation ngắn
+      if (text.length < 8 && /next|prev|menu|share/i.test(text)) return;
+      seen.add(el);
+      list.push(el);
+    });
+
+    // Fallback: khối text dài (nguontruyen hay 1 div + <br>)
+    if (list.length < 3) {
+      root.querySelectorAll("div").forEach(function (el) {
+        if (el.closest && el.closest("[id^='sr-']")) return;
+        if (seen.has(el)) return;
+        if (el.querySelector(sel)) return;
+        var text = (el.innerText || "").trim();
+        if (text.length < 40) return;
+        // 1 khối lớn: tách theo đoạn \n\n nếu quá dài
+        if (text.length > 80) {
+          seen.add(el);
+          list.push(el);
+        }
+      });
+    }
+    // Nếu chỉ 1 khối rất dài — vẫn dịch được (translateLong cắt chunk)
+    return list;
+  }
+
+  function guessSourceLang(sample) {
+    var s = sample || "";
+    var cjk = (s.match(/[\u4e00-\u9fff]/g) || []).length;
+    var vi = (
+      s.match(
+        /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/gi
+      ) || []
+    ).length;
+    if (cjk > 10) return "zh-CN";
+    if (vi > 15) return "vi";
+    return "en";
+  }
+
   function translateChunk(text, langpair) {
     return new Promise(function (resolve, reject) {
       if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
@@ -157,21 +157,45 @@
     });
   }
 
-  /**
-   * Phát hiện lang nguồn thô: nhiều ký tự CJK → zh, Latin → en, mặc định en.
-   */
-  function guessSourceLang(sample) {
-    var s = sample || "";
-    var cjk = (s.match(/[\u4e00-\u9fff]/g) || []).length;
-    var vi = (s.match(/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/gi) || []).length;
-    if (cjk > 10) return "zh-CN";
-    if (vi > 15) return "vi";
-    return "en";
+  function sleep(ms) {
+    return new Promise(function (r) {
+      setTimeout(r, ms);
+    });
   }
 
   /**
-   * Dịch toàn vùng nội dung sang targetLang (mặc định vi).
+   * Dịch text dài: cắt ≤450, ghép lại bằng khoảng trắng (giữ trong 1 khối).
    */
+  async function translateLong(text, langpair) {
+    if (text.length <= 450) {
+      addDailyChars(text.length);
+      return await translateChunk(text, langpair);
+    }
+    var parts = [];
+    for (var p = 0; p < text.length; p += 450) {
+      if (p > 0) await sleep(40);
+      var slice = text.slice(p, p + 450);
+      parts.push(await translateChunk(slice, langpair));
+      addDailyChars(slice.length);
+    }
+    return parts.join(" ");
+  }
+
+  /**
+   * Gán bản dịch vào element mà KHÔNG phá cấu trúc con nếu có thể:
+   * - Không có element con → textContent
+   * - Có con → chỉ thay text node lá (tuần tự), không gộp
+   */
+  function applyTranslationToEl(el, translated) {
+    if (!el.children || el.children.length === 0) {
+      el.textContent = translated;
+      return;
+    }
+    // Có child (a, strong…): thay toàn bộ textContent sẽ mất style —
+    // chấp nhận mất style inline để giữ block layout (quan trọng hơn)
+    el.textContent = translated;
+  }
+
   async function translatePage(targetLang) {
     if (isBusy) {
       window.StoryReaderUI?.toast?.("Đang dịch…");
@@ -179,67 +203,172 @@
     }
     targetLang = targetLang || localStorage.getItem("sr-target-lang") || "vi";
     isBusy = true;
+    abortFlag = false;
     try {
-      var nodes = collectTextNodes();
-      if (!nodes.length) {
-        window.StoryReaderUI?.toast?.("Không tìm thấy text để dịch");
+      try {
+        window.__srWasSpeakingBeforeTranslate = !!(
+          window.StoryTTS &&
+          (window.StoryTTS.isSpeaking?.() ||
+            document.querySelector("#sr-panel-play.sr-playing"))
+        );
+      } catch (eW) {
+        window.__srWasSpeakingBeforeTranslate = false;
+      }
+      var blocks = collectBlocks();
+      // Truyện tranh: ít chữ + nhiều ảnh → ưu tiên OCR
+      var imgCount = 0;
+      try {
+        imgCount = document.querySelectorAll(
+          "img, canvas, [class*='viewer'] img, [class*='page'] img"
+        ).length;
+      } catch (e0) {}
+      var textLen = 0;
+      blocks.forEach(function (b) {
+        textLen += ((b.innerText || "").trim()).length;
+      });
+      // Truyện tranh: nhiều ảnh, ít chữ nội dung
+      var isManga = imgCount >= 2 && textLen < 800;
+
+      if (isManga || (imgCount >= 5 && textLen < 1500)) {
+        window.StoryReaderUI?.toast?.("Phát hiện ảnh/truyện tranh — OCR…", 10000);
+        try {
+          if (window.StoryImageTranslate) {
+            var n = await window.StoryImageTranslate.translateInRoot(null, {
+              loose: true,
+              silent: false,
+            });
+            translateWanted = true;
+            try {
+              sessionStorage.setItem("sr-translate-wanted", "1");
+            } catch (e1) {}
+            if (n > 0) {
+              // Resume TTS nếu đang nghe (overlay không vào TTS; vẫn ok)
+              return true;
+            }
+          }
+        } catch (e2) {
+          console.warn("[Translate] manga OCR", e2);
+        }
+        // Nếu OCR fail nhưng còn text → dịch text bên dưới
+        if (!blocks.length || textLen < 40) {
+          window.StoryReaderUI?.toast?.(
+            "OCR chưa chạy được. Reload extension (cần libs/tesseract).",
+            4000
+          );
+          return false;
+        }
+      }
+
+      if (!blocks.length) {
+        window.StoryReaderUI?.toast?.("Không tìm thấy đoạn để dịch");
         return false;
       }
 
-      // Lưu bản gốc (chỉ lần đầu trên mỗi node)
-      touchedNodes = [];
-      nodes.forEach(function (n) {
-        if (!originalTextMap.has(n)) {
-          originalTextMap.set(n, n.nodeValue);
+      // Lưu HTML gốc để hoàn tác (giữ layout khi restore)
+      translatedEls = [];
+      blocks.forEach(function (el) {
+        if (!originalMap.has(el)) {
+          originalMap.set(el, el.innerHTML);
         }
-        touchedNodes.push(n);
+        translatedEls.push(el);
       });
 
-      var sample = nodes
-        .slice(0, 8)
-        .map(function (n) {
-          return n.nodeValue;
+      var sample = blocks
+        .slice(0, 5)
+        .map(function (el) {
+          return el.innerText;
         })
         .join(" ");
       var source = guessSourceLang(sample);
       if (source === targetLang) {
-        // Đã cùng ngôn ngữ đích — thử en→vi
         source = source === "vi" ? "en" : source;
       }
       var langpair = source + "|" + targetLang;
 
-      var used = getDailyChars();
-      if (used > 4500) {
-        window.StoryReaderUI?.toast?.(
-          "Gần chạm hạn MyMemory (~5000 ký tự/ngày). Nên giảm dịch hoặc tự host LibreTranslate."
-        );
+      window.StoryReaderUI?.toast?.(
+        "Đang dịch 0/" + blocks.length + " đoạn…",
+        60000
+      );
+
+      var okCount = 0;
+      var failCount = 0;
+
+      for (var i = 0; i < blocks.length; i++) {
+        var el = blocks[i];
+        var text = (el.innerText || "").trim();
+        if (text.length < 3) continue;
+        if (abortFlag) break;
+        try {
+          var out = await translateLong(text, langpair);
+          applyTranslationToEl(el, out);
+          okCount++;
+        } catch (err) {
+          failCount++;
+          console.warn("[Translate] block fail", err);
+        }
+        if ((i + 1) % 3 === 0 || i + 1 === blocks.length) {
+          window.StoryReaderUI?.toast?.(
+            "Đang dịch " +
+              (i + 1) +
+              "/" +
+              blocks.length +
+              (failCount ? " (lỗi:" + failCount + ")" : "") +
+              "…",
+            60000
+          );
+        }
+        await sleep(25);
       }
 
-      var batches = chunkBySize(nodes, 480);
-      window.StoryReaderUI?.toast?.("Đang dịch " + batches.length + " phần…");
-
-      for (var b = 0; b < batches.length; b++) {
-        var batch = batches[b];
-        var translated = await translateChunk(batch.text, langpair);
-        addDailyChars(batch.text.length);
-
-        // Phân bổ bản dịch lại các node theo tỉ lệ độ dài (đơn giản: node đầu nhận hết nếu 1 node)
-        if (batch.nodes.length === 1) {
-          batch.nodes[0].nodeValue = translated;
-        } else {
-          // Gán cả chuỗi dịch vào node đầu, xóa text các node còn lại trong batch
-          // (tránh cắt sai giữa từ; layout vẫn ổn với text liền mạch)
-          batch.nodes[0].nodeValue = translated;
-          for (var j = 1; j < batch.nodes.length; j++) {
-            batch.nodes[j].nodeValue = " ";
+      // OCR ảnh trong cùng nút Dịch trang (im lặng nếu fail / không có ảnh)
+      if (!abortFlag) {
+        try {
+          if (window.StoryImageTranslate) {
+            await window.StoryImageTranslate.translateInRoot(null, {
+              loose: true,
+              silent: true,
+            });
           }
+        } catch (e) {
+          console.warn("[Translate] OCR skip", e);
         }
       }
 
       showingOriginal = false;
-      window.StoryReaderUI?.toast?.("Đã dịch xong → " + targetLang);
-      window.StoryReaderUI?.onTranslateState?.({ translated: true, showingOriginal: false });
-      return true;
+      translateWanted = true;
+      try {
+        sessionStorage.setItem("sr-translate-wanted", "1");
+      } catch (e) {}
+      startAutoTranslateObserver();
+
+      var msg =
+        okCount === 0
+          ? "Dịch thất bại (rate-limit). Thử lại sau."
+          : "✓ Đã dịch " +
+            okCount +
+            "/" +
+            blocks.length +
+            " đoạn → " +
+            targetLang +
+            (failCount ? " (" + failCount + " lỗi)" : "");
+      window.StoryReaderUI?.toast?.(msg, 4500);
+
+      // Đang nghe → đọc tiếp bằng bản dịch
+      try {
+        var wasOn =
+          window.StoryTTS &&
+          (window.StoryTTS.isSpeaking?.() ||
+            document.getElementById("sr-panel-play")?.classList.contains("sr-playing"));
+        if (wasOn || window.__srWasSpeakingBeforeTranslate) {
+          window.__srWasSpeakingBeforeTranslate = false;
+          window.StoryTTS?.stop?.();
+          setTimeout(function () {
+            window.StoryTTS?.startFromPage?.();
+          }, 400);
+        }
+      } catch (eR) {}
+
+      return okCount > 0;
     } catch (err) {
       console.warn("[Translate]", err);
       window.StoryReaderUI?.toast?.("Dịch lỗi: " + (err.message || err));
@@ -249,51 +378,170 @@
     }
   }
 
-  /** Khôi phục toàn bộ text gốc đã lưu. */
-  function restoreOriginal() {
-    for (var i = 0; i < touchedNodes.length; i++) {
-      var n = touchedNodes[i];
-      if (originalTextMap.has(n)) {
-        try {
-          n.nodeValue = originalTextMap.get(n);
-        } catch (e) {}
-      }
-    }
+  function clearTranslateWanted() {
+    translateWanted = false;
     showingOriginal = true;
-    window.StoryReaderUI?.onTranslateState?.({ translated: true, showingOriginal: true });
-    window.StoryReaderUI?.toast?.("Đã hiện bản gốc");
+    try {
+      sessionStorage.removeItem("sr-translate-wanted");
+    } catch (e) {}
+    stopAutoTranslateObserver();
   }
 
-  /** Áp lại bản dịch đã có trong session: dịch lại từ original map. */
-  async function showTranslated() {
-    // Đơn giản: dịch lại từ original
-    for (var i = 0; i < touchedNodes.length; i++) {
-      var n = touchedNodes[i];
-      if (originalTextMap.has(n)) {
+  function restoreOriginal() {
+    translatedEls.forEach(function (el) {
+      if (originalMap.has(el)) {
         try {
-          n.nodeValue = originalTextMap.get(n);
+          el.innerHTML = originalMap.get(el);
         } catch (e) {}
       }
-    }
+    });
+    clearTranslateWanted();
+    // Dừng TTS đang đọc bản dịch + xóa hàng đợi cũ
+    try {
+      window.StoryTTS?.stop?.();
+    } catch (e) {}
+    window.StoryReaderUI?.toast?.("Đã hiện bản gốc (tắt tự dịch)", 2500);
+  }
+
+  async function showTranslated() {
+    // Dịch lại từ bản gốc đã lưu
+    translatedEls.forEach(function (el) {
+      if (originalMap.has(el)) {
+        try {
+          el.innerHTML = originalMap.get(el);
+        } catch (e) {}
+      }
+    });
     showingOriginal = false;
     return translatePage(localStorage.getItem("sr-target-lang") || "vi");
   }
 
   function toggleOriginal() {
-    if (!touchedNodes.length) {
+    if (!translatedEls.length) {
       window.StoryReaderUI?.toast?.("Chưa dịch trang nào");
       return;
     }
-    if (showingOriginal) {
-      // Hiện lại bản dịch: cần dịch lại vì không cache bản dịch riêng
-      showTranslated();
-    } else {
-      restoreOriginal();
-    }
+    if (showingOriginal) showTranslated();
+    else restoreOriginal();
   }
 
   function isTranslated() {
-    return touchedNodes.length > 0 && !showingOriginal;
+    return translatedEls.length > 0 && !showingOriginal;
+  }
+  function isTranslateWanted() {
+    try {
+      return translateWanted || sessionStorage.getItem("sr-translate-wanted") === "1";
+    } catch (e) {
+      return translateWanted;
+    }
+  }
+
+  function translateNewBlocksOnly() {
+    if (isBusy || !isTranslateWanted()) return;
+    var blocks = collectBlocks();
+    var fresh = blocks.filter(function (el) {
+      return !originalMap.has(el);
+    });
+    if (!fresh.length) return;
+
+    (async function () {
+      if (isBusy) return;
+      isBusy = true;
+      try {
+        var targetLang = localStorage.getItem("sr-target-lang") || "vi";
+        var sample = fresh
+          .slice(0, 4)
+          .map(function (el) {
+            return el.innerText;
+          })
+          .join(" ");
+        var source = guessSourceLang(sample);
+        if (source === targetLang) source = source === "vi" ? "en" : source;
+        var langpair = source + "|" + targetLang;
+        var ok = 0;
+        for (var i = 0; i < fresh.length; i++) {
+          var el = fresh[i];
+          var text = (el.innerText || "").trim();
+          if (text.length < 3) continue;
+          originalMap.set(el, el.innerHTML);
+          translatedEls.push(el);
+          try {
+            var out = await translateLong(text, langpair);
+            applyTranslationToEl(el, out);
+            ok++;
+          } catch (e) {
+            console.warn("[Translate] auto", e);
+          }
+          await sleep(25);
+        }
+        if (ok) {
+          window.StoryReaderUI?.toast?.("✓ Tự dịch +" + ok + " đoạn mới", 2500);
+        }
+      } finally {
+        isBusy = false;
+      }
+    })();
+  }
+
+  function stopAutoTranslateObserver() {
+    if (autoObs) {
+      try {
+        autoObs.disconnect();
+      } catch (e) {}
+      autoObs = null;
+    }
+    clearTimeout(observerTimer);
+    try {
+      clearInterval(window.__srTrPoll);
+    } catch (e) {}
+  }
+
+  function startAutoTranslateObserver() {
+    if (autoObs) return;
+    autoObs = new MutationObserver(function () {
+      clearTimeout(observerTimer);
+      observerTimer = setTimeout(translateNewBlocksOnly, 900);
+    });
+    try {
+      autoObs.observe(document.body, { childList: true, subtree: true });
+    } catch (e) {}
+
+    var lastH = document.documentElement.scrollHeight;
+    clearInterval(window.__srTrPoll);
+    window.__srTrPoll = setInterval(function () {
+      if (!isTranslateWanted() || isBusy) return;
+      var h = document.documentElement.scrollHeight;
+      if (h > lastH + 150) {
+        lastH = h;
+        translateNewBlocksOnly();
+      }
+    }, 1800);
+
+    if (!window.__srTrScrollBound) {
+      window.__srTrScrollBound = true;
+      window.addEventListener(
+        "scroll",
+        function () {
+          if (!isTranslateWanted()) return;
+          clearTimeout(window.__srTrScrollT);
+          window.__srTrScrollT = setTimeout(function () {
+            if (
+              window.scrollY + window.innerHeight >
+              document.documentElement.scrollHeight - 900
+            ) {
+              translateNewBlocksOnly();
+            }
+          }, 500);
+        },
+        { passive: true }
+      );
+    }
+  }
+
+  function abort() {
+    abortFlag = true;
+    isBusy = false;
+    window.StoryReaderUI?.toast?.("Đã dừng dịch", 2000);
   }
 
   window.StoryTranslator = {
@@ -301,9 +549,19 @@
     restoreOriginal: restoreOriginal,
     toggleOriginal: toggleOriginal,
     isTranslated: isTranslated,
-    collectTextNodes: collectTextNodes,
-    chunkBySize: chunkBySize,
+    isTranslateWanted: isTranslateWanted,
+    startAutoTranslateObserver: startAutoTranslateObserver,
+    collectBlocks: collectBlocks,
+    abort: abort,
+    clearTranslateWanted: clearTranslateWanted,
   };
+
+  // Giữ cờ qua next chương (user đã bấm Dịch và chưa xem bản gốc)
+  try {
+    if (sessionStorage.getItem("sr-translate-wanted") === "1") {
+      translateWanted = true;
+    }
+  } catch (e) {}
 
   console.log("[Story Reader] translator.js loaded — StoryTranslator ready");
 })();

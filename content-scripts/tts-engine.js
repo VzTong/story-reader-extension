@@ -435,6 +435,62 @@
       if (nextBtn) return nextBtn;
     }
 
+    // freewebnovel.com / similar
+    if (host.indexOf("freewebnovel") !== -1) {
+      var fw =
+        document.querySelector("a#next_chap") ||
+        document.querySelector("a.chapternav.next") ||
+        document.querySelector("a.nextchapter") ||
+        document.querySelector('a[title*="Next Chapter"]') ||
+        document.querySelector('a[title*="Next"]') ||
+        document.querySelector(".chapter-page-btn a:last-child") ||
+        document.querySelector("#next") ||
+        document.querySelector("a.next");
+      if (fw && fw.href && !String(fw.href).startsWith("javascript:")) {
+        if (isLikelySameStory(fw.href, path) || host.indexOf("freewebnovel") !== -1)
+          return fw;
+      }
+      // path /novel/slug/chapter-12 → chapter-13
+      try {
+        var fwm = path.match(/\/chapter[_-]?(\d+)/i);
+        if (fwm) {
+          var fwn = parseInt(fwm[1], 10) + 1;
+          var fwPath = path.replace(/\/chapter[_-]?\d+/i, "/chapter-" + fwn);
+          return { __srNavigate: location.origin + fwPath };
+        }
+      } catch (eFw) {}
+    }
+
+    // orv.pages.dev / path kiểu /ch_1, /ch_2, /chapter/1
+    try {
+      var chMatch =
+        path.match(/\/ch[_-]?(\d+)\/?$/i) ||
+        path.match(/\/chapter[_-]?(\d+)\/?$/i) ||
+        path.match(/\/chapters?\/(\d+)\/?$/i);
+      if (chMatch) {
+        var nextN = parseInt(chMatch[1], 10) + 1;
+        var nextPath = path.replace(
+          /\/(ch[_-]?|chapter[_-]?|chapters?\/)(\d+)\/?$/i,
+          function (_, pref) {
+            if (/ch/i.test(pref) && !/chapter/i.test(pref)) return "/ch_" + nextN;
+            if (/chapters/i.test(pref)) return "/chapters/" + nextN;
+            return "/chapter/" + nextN;
+          }
+        );
+        // Ưu tiên <a> có sẵn trên trang
+        var candidates = document.querySelectorAll("a[href]");
+        for (var ci = 0; ci < candidates.length; ci++) {
+          var ah = candidates[ci].getAttribute("href") || "";
+          if (ah.indexOf("ch_" + nextN) !== -1 || ah.indexOf("/ch/" + nextN) !== -1 || ah.indexOf("chapter/" + nextN) !== -1 || ah.indexOf("ch-" + nextN) !== -1) {
+            if (isLikelySameStory(candidates[ci].href, path)) return candidates[ci];
+          }
+        }
+        // Không có link: tạo URL next (goNextChapter hỗ trợ __srNavigate)
+        var abs = location.origin + nextPath + (location.search || "");
+        return { __srNavigate: abs };
+      }
+    } catch (eOrv) {}
+
     // 1. rel=next
     var rel = document.querySelector('a[rel="next"]');
     if (rel && rel.href && !rel.href.startsWith("javascript:")) {
@@ -578,6 +634,17 @@
     try {
       sessionStorage.setItem("sr-continue-mode", mode === "scroll" ? "scroll" : "tts");
       sessionStorage.setItem("sr-auto-next", autoNextChapter ? "1" : "0");
+      // Chương mới: đọc/cuộn từ đầu (không start giữa trang)
+      sessionStorage.setItem("sr-start-from-top", "1");
+      // Chỉ giữ cờ dịch nếu user VẪN muốn dịch (chưa restore bản gốc)
+      try {
+        if (
+          window.StoryTranslator?.isTranslateWanted?.() ||
+          sessionStorage.getItem("sr-translate-wanted") === "1"
+        ) {
+          sessionStorage.setItem("sr-translate-wanted", "1");
+        }
+      } catch (eTr) {}
       // legacy
       if (mode === "tts") sessionStorage.setItem("sr-continue-tts", "1");
       else sessionStorage.removeItem("sr-continue-tts");
@@ -1142,6 +1209,24 @@
         window.StoryReaderUI?.setPlaying?.(false);
         return;
       }
+      // Nếu user đang bật dịch trang → dịch content mới trước khi đọc
+      try {
+        if (window.StoryTranslator && window.StoryTranslator.isTranslateWanted?.()) {
+          window.StoryReaderUI?.toast?.("Dịch chương mới…");
+          await window.StoryTranslator.translatePage(
+            localStorage.getItem("sr-target-lang") || "vi"
+          );
+          // Lấy lại text sau dịch
+          var after = window.StoryDetector.detectContent();
+          if (after && after.text && after.text.length > 40) {
+            sentences = splitIntoSentences(after.text);
+            if (startIdx >= sentences.length) startIdx = Math.max(0, prevLen);
+          }
+        }
+      } catch (trErr) {
+        console.warn("[TTS] Infinite translate", trErr);
+      }
+
       console.log("[TTS] Infinite continue @" + startIdx + "/" + sentences.length);
       isSpeaking = true;
       window.StoryReaderUI?.setPlaying?.(true);
@@ -1174,12 +1259,32 @@
       try {
         wrapSentencesInPage(sentences);
       } catch (err) {}
-      var startIdx = findIndexNearViewport(sentences);
-      // Webnovel / infinite: nếu đang giữa trang dài, không về 0
-      if (isInfiniteScrollHost() && startIdx === 0 && window.scrollY > 400) {
-        // ước lượng theo tỉ lệ cuộn
-        var ratio = window.scrollY / Math.max(1, document.documentElement.scrollHeight);
-        startIdx = Math.min(sentences.length - 1, Math.floor(ratio * sentences.length));
+      var startIdx = 0;
+      var fromTop = false;
+      try {
+        fromTop = sessionStorage.getItem("sr-start-from-top") === "1";
+        sessionStorage.removeItem("sr-start-from-top");
+      } catch (eTop) {}
+      if (fromTop) {
+        // Sau next chương: luôn từ đầu
+        startIdx = 0;
+        try {
+          window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+        } catch (eScr) {
+          window.scrollTo(0, 0);
+        }
+      } else {
+        startIdx = findIndexNearViewport(sentences);
+        // Webnovel infinite: đang giữa trang dài
+        if (isInfiniteScrollHost() && startIdx === 0 && window.scrollY > 400) {
+          var ratio =
+            window.scrollY /
+            Math.max(1, document.documentElement.scrollHeight);
+          startIdx = Math.min(
+            sentences.length - 1,
+            Math.floor(ratio * sentences.length)
+          );
+        }
       }
       console.log(
         "[TTS] " +
@@ -1513,31 +1618,40 @@
     bottomWatchTimer = setTimeout(watch, 250);
   }
 
+  /**
+   * Chọn phần tử cuộn trang — KHÔNG bao giờ lấy panel list extension (#sr-*).
+   * orv.pages.dev: document thường là root đúng; tránh #sr-sentence-list.
+   */
   function getScrollRoot() {
-    var se = document.scrollingElement || document.documentElement;
+    var se = document.scrollingElement || document.documentElement || document.body;
     var best = null;
     var bestScore = 0;
     var nodes = document.querySelectorAll(
-      "div, main, section, article, [class*='reader'], [class*='scroll'], [class*='chapter'], [class*='viewer']"
+      "div, main, section, article, [class*='reader'], [class*='scroll'], [class*='chapter'], [class*='viewer'], [class*='content']"
     );
-    var limit = Math.min(nodes.length, 120);
+    var limit = Math.min(nodes.length, 150);
     for (var i = 0; i < limit; i++) {
       var el = nodes[i];
+      // Bỏ UI extension (list câu, panel, menu, hud)
+      if (el.id && el.id.indexOf("sr-") === 0) continue;
+      if (el.closest && el.closest("[id^='sr-']")) continue;
       var st = window.getComputedStyle(el);
       var ov = st.overflowY;
       if (ov !== "auto" && ov !== "scroll" && ov !== "overlay") continue;
       var can = el.scrollHeight - el.clientHeight;
-      if (can < 120) continue;
-      // Ưu tiên vùng cao + cuộn được nhiều (manga viewer)
-      var score = can + el.clientHeight * 0.5;
+      if (can < 150) continue;
+      // Panel list nhỏ chiều cao → điểm thấp
+      var score = can + el.clientHeight * 0.35;
+      // Ưu tiên vùng gần full viewport (trang đọc)
+      if (el.clientHeight > window.innerHeight * 0.5) score += 500;
       if (score > bestScore) {
         bestScore = score;
         best = el;
       }
     }
-    // Document chỉ thắng nếu cuộn được nhiều hơn container
     var docCan = (se && se.scrollHeight - se.clientHeight) || 0;
-    if (docCan > bestScore) return se;
+    // Text novel: document thắng nếu cuộn được tương đương
+    if (docCan >= bestScore * 0.85 || docCan > 400) return se;
     return best || se;
   }
 
@@ -1627,7 +1741,8 @@
     resumeCountdown = 0;
     reachedBottomOnce = false;
     scrollAccum = 0;
-    cachedScrollRoot = null;
+    cachedScrollRoot = null; // force re-detect (không dính list panel)
+    scrollRootCacheAt = 0;
     tickScrollFrame._last = 0;
     requestWakeLock();
     stopAutoScrollTimer();
@@ -1758,6 +1873,7 @@
   window.StoryTTS = {
     speakQueue: speakQueue,
     startFromPage: startFromPage,
+    isSpeaking: function () { return !!isSpeaking && !isPaused; },
     splitIntoSentences: splitIntoSentences,
     pause: pause,
     resume: resume,
@@ -1852,7 +1968,7 @@
     },
   };
 
-  // Sau next chương: tiếp tục đúng mode (tts | scroll)
+  // Sau next chương: dịch (nếu user đã bật) → rồi TTS / auto-scroll
   try {
     var contMode = sessionStorage.getItem("sr-continue-mode") || "";
     if (!contMode && sessionStorage.getItem("sr-continue-tts") === "1") contMode = "tts";
@@ -1860,7 +1976,7 @@
     sessionStorage.removeItem("sr-continue-tts");
     if (contMode === "tts" || contMode === "scroll") {
       var tries = 0;
-      var tryStart = function () {
+      var tryStart = async function () {
         tries++;
         if (!window.StoryDetector && contMode === "tts") {
           if (tries < 25) setTimeout(tryStart, 300);
@@ -1868,14 +1984,31 @@
         }
         try {
           window.StoryReaderUI?.showToolbar?.();
-        } catch (e) {}
+        } catch (e0) {}
+
+        // Tự dịch trang mới nếu session đã dịch
+        var wantTr = false;
+        try {
+          // User đã Dịch trang (chưa xem bản gốc) → chương mới tự dịch rồi đọc/cuộn
+          wantTr = sessionStorage.getItem("sr-translate-wanted") === "1";
+        } catch (e1) {}
+        if (wantTr && window.StoryTranslator && window.StoryTranslator.translatePage) {
+          try {
+            window.StoryReaderUI?.toast?.("Đang dịch chương mới…", 8000);
+            await window.StoryTranslator.translatePage(
+              localStorage.getItem("sr-target-lang") || "vi"
+            );
+          } catch (e2) {
+            console.warn("[TTS] auto-translate on next", e2);
+          }
+        }
+
         if (contMode === "scroll") {
-          // Tiếp tục auto-scroll (không bật TTS)
           autoScrollEnabled = true;
           startAutoScroll();
           try {
             window.StoryReaderUI?.setScrolling?.(true);
-          } catch (e) {}
+          } catch (e3) {}
         } else {
           startFromPage();
         }

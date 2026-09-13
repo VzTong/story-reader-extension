@@ -8,6 +8,18 @@
  */
 console.log("[Story Reader] background service worker loaded");
 
+  // Content script nhờ background đọc file trong package (tránh Failed to fetch)
+  // dùng cho Tesseract libs
+
+
+/** Hàng đợi dịch tuần tự — tránh bắn song song gây 429 */
+let translateQueue = Promise.resolve();
+function enqueueTranslate(fn) {
+  translateQueue = translateQueue.then(fn, fn);
+  return translateQueue;
+}
+
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
 
@@ -75,6 +87,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
    * msg: { text, langpair } — langpair ví dụ "en|vi", "zh-CN|vi"
    * Giới hạn ~500 ký tự/request; content script đã chunk trước khi gửi.
    */
+  if (msg.type === "FETCH_EXT_TEXT") {
+    const path = String(msg.path || "");
+    if (!path || path.indexOf("..") !== -1) {
+      sendResponse({ ok: false, error: "bad path" });
+      return true;
+    }
+    (async () => {
+      try {
+        const url = chrome.runtime.getURL(path);
+        const res = await fetch(url);
+        if (!res.ok) {
+          sendResponse({ ok: false, error: "http " + res.status });
+          return;
+        }
+        const text = await res.text();
+        sendResponse({ ok: true, text: text });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === "MYMEMORY_TRANSLATE") {
     const text = String(msg.text || "").slice(0, 500);
     const langpair = msg.langpair || "en|vi";
@@ -83,36 +118,101 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: "empty" });
       return true;
     }
-    const url =
-      "https://api.mymemory.translated.net/get?q=" +
-      encodeURIComponent(text) +
-      "&langpair=" +
-      encodeURIComponent(langpair) +
-      "&de=" +
-      encodeURIComponent(email);
 
-    (async () => {
-      try {
-        const res = await fetch(url, { method: "GET", credentials: "omit" });
-        if (!res.ok) {
-          sendResponse({ ok: false, error: "http " + res.status });
-          return;
+    function sleep(ms) {
+      return new Promise(function (r) {
+        setTimeout(r, ms);
+      });
+    }
+
+    /** Parse langpair "en|vi" → { sl, tl } */
+    function parsePair(pair) {
+      var p = String(pair || "en|vi").split("|");
+      return { sl: p[0] || "auto", tl: p[1] || "vi" };
+    }
+
+    /** MyMemory — retry khi 429 */
+    async function tryMyMemory() {
+      var url =
+        "https://api.mymemory.translated.net/get?q=" +
+        encodeURIComponent(text) +
+        "&langpair=" +
+        encodeURIComponent(langpair) +
+        "&de=" +
+        encodeURIComponent(email);
+      var delays = [0, 2000, 5000];
+      var lastErr = "mymemory fail";
+      for (var i = 0; i < delays.length; i++) {
+        if (delays[i]) await sleep(delays[i]);
+        try {
+          var res = await fetch(url, { method: "GET", credentials: "omit" });
+          if (res.status === 429) {
+            lastErr = "http 429";
+            continue;
+          }
+          if (!res.ok) {
+            lastErr = "http " + res.status;
+            continue;
+          }
+          var data = await res.json();
+          var translated =
+            data && data.responseData && data.responseData.translatedText;
+          if (translated != null && String(translated).length) {
+            return { ok: true, translatedText: String(translated), via: "mymemory" };
+          }
+          lastErr = (data && data.responseDetails) || "no translation";
+        } catch (e) {
+          lastErr = String(e && e.message ? e.message : e);
         }
-        const data = await res.json();
-        const translated =
-          data && data.responseData && data.responseData.translatedText;
-        if (translated == null) {
-          sendResponse({
-            ok: false,
-            error: (data && data.responseDetails) || "no translation",
-          });
-          return;
-        }
-        sendResponse({ ok: true, translatedText: translated });
-      } catch (e) {
-        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
       }
-    })();
+      return { ok: false, error: lastErr };
+    }
+
+    /**
+     * Fallback: Google gtx endpoint (không key, dùng khi MyMemory 429/hết quota).
+     * Chỉ dùng nội bộ extension, không phải Cloud Translation API trả phí.
+     */
+    async function tryGoogleGtx() {
+      var pair = parsePair(langpair);
+      var url =
+        "https://translate.googleapis.com/translate_a/single?client=gtx&sl=" +
+        encodeURIComponent(pair.sl === "zh-CN" ? "zh-CN" : pair.sl) +
+        "&tl=" +
+        encodeURIComponent(pair.tl) +
+        "&dt=t&q=" +
+        encodeURIComponent(text);
+      try {
+        var res = await fetch(url, { method: "GET", credentials: "omit" });
+        if (!res.ok) return { ok: false, error: "gtx http " + res.status };
+        var data = await res.json();
+        // data[0] = [[translated, original, ...], ...]
+        var parts = [];
+        if (data && data[0]) {
+          for (var i = 0; i < data[0].length; i++) {
+            if (data[0][i] && data[0][i][0]) parts.push(data[0][i][0]);
+          }
+        }
+        var out = parts.join("");
+        if (!out) return { ok: false, error: "gtx empty" };
+        return { ok: true, translatedText: out, via: "gtx" };
+      } catch (e) {
+        return { ok: false, error: String(e && e.message ? e.message : e) };
+      }
+    }
+
+    enqueueTranslate(async () => {
+      // Ưu tiên gtx (nhanh hơn MyMemory, ít 429 hơn khi có queue)
+      var r = await tryGoogleGtx();
+      if (!r.ok) {
+        console.warn("[SR] gtx fail:", r.error, "→ MyMemory");
+        r = await tryMyMemory();
+      }
+      if (!r.ok && String(r.error || "").indexOf("429") !== -1) {
+        await sleep(2500);
+        r = await tryGoogleGtx();
+      }
+      sendResponse(r);
+    });
     return true;
   }
 });
