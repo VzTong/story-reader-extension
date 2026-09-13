@@ -14,10 +14,25 @@
 (function () {
   "use strict";
 
-  /* ===== Fallback: luôn có StoryTranslator + StoryImageTranslate ===== */
-  if (!window.StoryTranslator) {
-    (function () {
 
+
+
+
+
+
+
+  /* ===== Inline modules (tránh eval / CSP trang) ===== */
+  if (!window.StoryTranslator) {
+/**
+ * Module dịch trang — giữ layout bằng cách dịch theo khối DOM (p, h1, li…).
+ *
+ * API: window.StoryTranslator
+ *  - translatePage(targetLang)
+ *  - restoreOriginal() / toggleOriginal()
+ *  - isTranslated() / isTranslateWanted()
+ *  - startAutoTranslateObserver()
+ */
+(function () {
   "use strict";
 
   /** element → { html or text, mode } */
@@ -25,6 +40,7 @@
   var translatedEls = [];
   var showingOriginal = false;
   var isBusy = false;
+  var abortFlag = false;
   var translateWanted = false;
   var dailyCharsKey = "sr-translate-chars-" + new Date().toISOString().slice(0, 10);
   var autoObs = null;
@@ -45,23 +61,44 @@
 
   function getTranslateRoot() {
     var sels = [
+      // nguontruyen / wordpress novel
+      ".chapter-c",
+      "#chapter-content",
+      ".box-chap",
+      ".content-chapter",
+      ".chapter-content",
+      "#chapterContent",
+      ".reading-content",
+      ".text-left",
+      "div.entry-content",
+      "article .entry-content",
+      // webnovel / orv
       "article",
       "main",
-      ".chapter-content",
       ".cha-words",
       ".cha-content",
-      "div.entry-content",
       ".prose",
       ".post-content",
       "#content",
-      "[class*='chapter']",
+      "[class*='chapter-content']",
+      "[class*='chapter_content']",
       "[class*='reader']",
     ];
+    var best = null;
+    var bestLen = 0;
     for (var i = 0; i < sels.length; i++) {
-      var el = document.querySelector(sels[i]);
-      if (el && (el.innerText || "").trim().length > 80) return el;
+      var nodes = document.querySelectorAll(sels[i]);
+      for (var j = 0; j < nodes.length; j++) {
+        var el = nodes[j];
+        if (el.closest && el.closest("[id^='sr-']")) continue;
+        var len = ((el.innerText || "").trim()).length;
+        if (len > bestLen && len > 80) {
+          bestLen = len;
+          best = el;
+        }
+      }
     }
-    return document.body;
+    return best || document.body;
   }
 
   /**
@@ -77,32 +114,51 @@
     root.querySelectorAll(sel).forEach(function (el) {
       if (el.closest && el.closest("[id^='sr-']")) return;
       if (seen.has(el)) return;
-      // Bỏ khối chỉ chứa khối con cùng loại (tránh dịch 2 lần)
-      var childBlock = el.querySelector(sel);
-      if (childBlock && el.tagName !== "LI") {
-        // vẫn lấy nếu text trực tiếp ngoài child
-      }
       var text = (el.innerText || "").trim();
       if (text.length < 3) return;
-      // Bỏ navigation ngắn
       if (text.length < 8 && /next|prev|menu|share/i.test(text)) return;
       seen.add(el);
       list.push(el);
     });
 
-    // Fallback: div chỉ có text, không có p/h bên trong
+    // webnovel.com: .cha-words / đoạn trong chapter mới load
+    try {
+      document
+        .querySelectorAll(
+          ".cha-words, .cha-content, [class*='cha-words'], [class*='cha-paragraph'], .chapter_content p, .cha-words div"
+        )
+        .forEach(function (el) {
+          if (el.closest && el.closest("[id^='sr-']")) return;
+          if (seen.has(el)) return;
+          // Bỏ container lớn đã có p con trong list
+          if (el.querySelector && el.querySelector("p") && el.matches(".cha-words, .cha-content")) {
+            return;
+          }
+          var text = (el.innerText || "").trim();
+          if (text.length < 8) return;
+          if (text.length > 5000) return;
+          seen.add(el);
+          list.push(el);
+        });
+    } catch (eWn) {}
+
+
+    // Fallback: khối text dài (nguontruyen hay 1 div + <br>)
     if (list.length < 3) {
-      root.querySelectorAll("div, span").forEach(function (el) {
+      root.querySelectorAll("div").forEach(function (el) {
         if (el.closest && el.closest("[id^='sr-']")) return;
         if (seen.has(el)) return;
         if (el.querySelector(sel)) return;
-        if (el.children.length > 3) return;
         var text = (el.innerText || "").trim();
-        if (text.length < 20 || text.length > 2000) return;
-        seen.add(el);
-        list.push(el);
+        if (text.length < 40) return;
+        // 1 khối lớn: tách theo đoạn \n\n nếu quá dài
+        if (text.length > 80) {
+          seen.add(el);
+          list.push(el);
+        }
       });
     }
+    // Nếu chỉ 1 khối rất dài — vẫn dịch được (translateLong cắt chunk)
     return list;
   }
 
@@ -121,24 +177,28 @@
 
   function translateChunk(text, langpair) {
     return new Promise(function (resolve, reject) {
-      if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-        reject(new Error("no chrome.runtime"));
+      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+        reject(new Error("Extension context invalidated — F5 trang sau khi Reload extension"));
         return;
       }
-      chrome.runtime.sendMessage(
-        { type: "MYMEMORY_TRANSLATE", text: text, langpair: langpair },
-        function (resp) {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
+      try {
+        chrome.runtime.sendMessage(
+          { type: "MYMEMORY_TRANSLATE", text: text, langpair: langpair },
+          function (resp) {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            if (resp && resp.ok && resp.translatedText != null) {
+              resolve(String(resp.translatedText));
+            } else {
+              reject(new Error((resp && resp.error) || "translate failed"));
+            }
           }
-          if (resp && resp.ok && resp.translatedText != null) {
-            resolve(String(resp.translatedText));
-          } else {
-            reject(new Error((resp && resp.error) || "translate failed"));
-          }
-        }
-      );
+        );
+      } catch (e) {
+        reject(new Error(String(e && e.message ? e.message : e)));
+      }
     });
   }
 
@@ -158,7 +218,7 @@
     }
     var parts = [];
     for (var p = 0; p < text.length; p += 450) {
-      if (p > 0) await sleep(80);
+      if (p > 0) await sleep(40);
       var slice = text.slice(p, p + 450);
       parts.push(await translateChunk(slice, langpair));
       addDailyChars(slice.length);
@@ -188,8 +248,74 @@
     }
     targetLang = targetLang || localStorage.getItem("sr-target-lang") || "vi";
     isBusy = true;
+    abortFlag = false;
     try {
+      try {
+        window.__srWasSpeakingBeforeTranslate = !!(
+          window.StoryTTS &&
+          (window.StoryTTS.isSpeaking?.() ||
+            document.querySelector("#sr-panel-play.sr-playing"))
+        );
+      } catch (eW) {
+        window.__srWasSpeakingBeforeTranslate = false;
+      }
+      var host = (location.hostname || "").toLowerCase();
+      var knownManga =
+        /kagane|nettruyen|truyenqq|truyentranh|mangadex|webtoon|asura|newtruyen|comick|manhwa|manhua/.test(
+          host
+        );
+
+      // Chỉ site manga mới OCR-only. Truyện chữ → dịch text.
       var blocks = collectBlocks();
+      var textLen = 0;
+      blocks.forEach(function (b) {
+        textLen += ((b.innerText || "").trim()).length;
+      });
+
+      var bigImgs = 0;
+      try {
+        document.querySelectorAll("img").forEach(function (img) {
+          if (img.closest && img.closest("[id^='sr-']")) return;
+          var w = Math.max(
+            img.naturalWidth || 0,
+            img.width || 0,
+            img.clientWidth || 0
+          );
+          var h = Math.max(
+            img.naturalHeight || 0,
+            img.height || 0,
+            img.clientHeight || 0
+          );
+          if (w >= 200 && h >= 200) bigImgs++;
+        });
+      } catch (e0) {}
+
+      // Manga host HOẶC (≥3 ảnh lớn VÀ rất ít chữ)
+      var isManga = knownManga || (bigImgs >= 3 && textLen < 200);
+
+      if (isManga && window.StoryImageTranslate) {
+        window.StoryReaderUI?.toast?.("Truyện tranh — OCR ảnh…", 15000);
+        try {
+          var n = await window.StoryImageTranslate.translateInRoot(null, {
+            loose: true,
+            silent: false,
+          });
+          translateWanted = true;
+          try {
+            sessionStorage.setItem("sr-translate-wanted", "1");
+          } catch (e1) {}
+          if (n > 0) return true;
+          window.StoryReaderUI?.toast?.(
+            "OCR chưa đọc được chữ trong ảnh. Thử cuộn để ảnh hiện rõ rồi dịch lại.",
+            4500
+          );
+        } catch (e2) {
+          console.warn("[Translate] manga OCR", e2);
+          window.StoryReaderUI?.toast?.("OCR lỗi: " + (e2.message || e2), 4000);
+        }
+        return false;
+      }
+
       if (!blocks.length) {
         window.StoryReaderUI?.toast?.("Không tìm thấy đoạn để dịch");
         return false;
@@ -228,6 +354,7 @@
         var el = blocks[i];
         var text = (el.innerText || "").trim();
         if (text.length < 3) continue;
+        if (abortFlag) break;
         try {
           var out = await translateLong(text, langpair);
           applyTranslationToEl(el, out);
@@ -235,6 +362,14 @@
         } catch (err) {
           failCount++;
           console.warn("[Translate] block fail", err);
+          if (String(err.message || err).indexOf("invalidated") !== -1) {
+            abortFlag = true;
+            window.StoryReaderUI?.toast?.(
+              "Extension đã Reload — F5 trang rồi dịch lại",
+              5000
+            );
+            break;
+          }
         }
         if ((i + 1) % 3 === 0 || i + 1 === blocks.length) {
           window.StoryReaderUI?.toast?.(
@@ -247,18 +382,22 @@
             60000
           );
         }
-        await sleep(50);
+        await sleep(25);
       }
 
-      // OCR ảnh (nếu có)
-      try {
-        if (window.StoryImageTranslate) {
-          await window.StoryImageTranslate.translateInRoot(null, {
-            loose: true,
-            silent: true,
-          });
+      // OCR ảnh trong cùng nút Dịch trang (im lặng nếu fail / không có ảnh)
+      if (!abortFlag) {
+        try {
+          if (window.StoryImageTranslate) {
+            await window.StoryImageTranslate.translateInRoot(null, {
+              loose: true,
+              silent: true,
+            });
+          }
+        } catch (e) {
+          console.warn("[Translate] OCR skip", e);
         }
-      } catch (e) {}
+      }
 
       showingOriginal = false;
       translateWanted = true;
@@ -278,6 +417,22 @@
             targetLang +
             (failCount ? " (" + failCount + " lỗi)" : "");
       window.StoryReaderUI?.toast?.(msg, 4500);
+
+      // Đang nghe → đọc tiếp bằng bản dịch
+      try {
+        var wasOn =
+          window.StoryTTS &&
+          (window.StoryTTS.isSpeaking?.() ||
+            document.getElementById("sr-panel-play")?.classList.contains("sr-playing"));
+        if (wasOn || window.__srWasSpeakingBeforeTranslate) {
+          window.__srWasSpeakingBeforeTranslate = false;
+          window.StoryTTS?.stop?.();
+          setTimeout(function () {
+            window.StoryTTS?.startFromPage?.();
+          }, 400);
+        }
+      } catch (eR) {}
+
       return okCount > 0;
     } catch (err) {
       console.warn("[Translate]", err);
@@ -288,6 +443,15 @@
     }
   }
 
+  function clearTranslateWanted() {
+    translateWanted = false;
+    showingOriginal = true;
+    try {
+      sessionStorage.removeItem("sr-translate-wanted");
+    } catch (e) {}
+    stopAutoTranslateObserver();
+  }
+
   function restoreOriginal() {
     translatedEls.forEach(function (el) {
       if (originalMap.has(el)) {
@@ -296,8 +460,12 @@
         } catch (e) {}
       }
     });
-    showingOriginal = true;
-    window.StoryReaderUI?.toast?.("Đã hiện bản gốc", 2000);
+    clearTranslateWanted();
+    // Dừng TTS đang đọc bản dịch + xóa hàng đợi cũ
+    try {
+      window.StoryTTS?.stop?.();
+    } catch (e) {}
+    window.StoryReaderUI?.toast?.("Đã hiện bản gốc (tắt tự dịch)", 2500);
   }
 
   async function showTranslated() {
@@ -333,17 +501,28 @@
     }
   }
 
+  /**
+   * Dịch các khối mới (chapter load thêm trên webnovel).
+   * Trả về Promise<number> — số đoạn đã dịch.
+   */
   function translateNewBlocksOnly() {
-    if (isBusy || !isTranslateWanted()) return;
+    if (!isTranslateWanted()) return Promise.resolve(0);
     var blocks = collectBlocks();
     var fresh = blocks.filter(function (el) {
       return !originalMap.has(el);
     });
-    if (!fresh.length) return;
+    if (!fresh.length) return Promise.resolve(0);
+    if (isBusy) {
+      // Chờ lượt đang chạy xong rồi thử lại
+      return new Promise(function (resolve) {
+        setTimeout(function () {
+          translateNewBlocksOnly().then(resolve);
+        }, 1200);
+      });
+    }
 
-    (async function () {
-      if (isBusy) return;
-      isBusy = true;
+    isBusy = true;
+    return (async function () {
       try {
         var targetLang = localStorage.getItem("sr-target-lang") || "vi";
         var sample = fresh
@@ -356,6 +535,7 @@
         if (source === targetLang) source = source === "vi" ? "en" : source;
         var langpair = source + "|" + targetLang;
         var ok = 0;
+        console.log("[Translate] auto +" + fresh.length + " khối mới");
         for (var i = 0; i < fresh.length; i++) {
           var el = fresh[i];
           var text = (el.innerText || "").trim();
@@ -369,37 +549,62 @@
           } catch (e) {
             console.warn("[Translate] auto", e);
           }
-          await sleep(50);
+          await sleep(25);
         }
         if (ok) {
           window.StoryReaderUI?.toast?.("✓ Tự dịch +" + ok + " đoạn mới", 2500);
         }
+        return ok;
       } finally {
         isBusy = false;
       }
     })();
   }
 
+  function stopAutoTranslateObserver() {
+    if (autoObs) {
+      try {
+        autoObs.disconnect();
+      } catch (e) {}
+      autoObs = null;
+    }
+    clearTimeout(observerTimer);
+    try {
+      clearInterval(window.__srTrPoll);
+    } catch (e) {}
+  }
+
   function startAutoTranslateObserver() {
     if (autoObs) return;
     autoObs = new MutationObserver(function () {
       clearTimeout(observerTimer);
-      observerTimer = setTimeout(translateNewBlocksOnly, 900);
+      observerTimer = setTimeout(function () {
+        translateNewBlocksOnly();
+      }, 600);
     });
     try {
       autoObs.observe(document.body, { childList: true, subtree: true });
     } catch (e) {}
 
     var lastH = document.documentElement.scrollHeight;
+    var lastCha = 0;
+    try {
+      lastCha = document.querySelectorAll(".cha-words, .cha-content").length;
+    } catch (e0) {}
     clearInterval(window.__srTrPoll);
     window.__srTrPoll = setInterval(function () {
-      if (!isTranslateWanted() || isBusy) return;
+      if (!isTranslateWanted()) return;
       var h = document.documentElement.scrollHeight;
-      if (h > lastH + 150) {
+      var cha = 0;
+      try {
+        cha = document.querySelectorAll(".cha-words, .cha-content").length;
+      } catch (e1) {}
+      if (h > lastH + 80 || cha > lastCha) {
         lastH = h;
+        lastCha = cha;
         translateNewBlocksOnly();
       }
-    }, 1800);
+    }, 1200);
 
     if (!window.__srTrScrollBound) {
       window.__srTrScrollBound = true;
@@ -422,6 +627,12 @@
     }
   }
 
+  function abort() {
+    abortFlag = true;
+    isBusy = false;
+    window.StoryReaderUI?.toast?.("Đã dừng dịch", 2000);
+  }
+
   window.StoryTranslator = {
     translatePage: translatePage,
     restoreOriginal: restoreOriginal,
@@ -430,18 +641,225 @@
     isTranslateWanted: isTranslateWanted,
     startAutoTranslateObserver: startAutoTranslateObserver,
     collectBlocks: collectBlocks,
+    translateNewBlocksOnly: translateNewBlocksOnly,
+    abort: abort,
+    clearTranslateWanted: clearTranslateWanted,
   };
 
+  // Giữ cờ qua next chương (user đã bấm Dịch và chưa xem bản gốc)
   try {
     if (sessionStorage.getItem("sr-translate-wanted") === "1") {
       translateWanted = true;
     }
   } catch (e) {}
-  console.log("[Story Reader] translator.js loaded — StoryTranslator ready");
 
-    })();
+  console.log("[Story Reader] translator.js loaded — StoryTranslator ready");
+})();
+
+  }
+  if (!window.StoryImageTranslate) {
+/**
+ * OCR chữ trong ảnh truyện tranh (capture viewport).
+ *
+ * Luồng:
+ * 1) Ẩn UI extension (tránh OCR dính toast/menu)
+ * 2) chrome.tabs.captureVisibleTab
+ * 3) Nén JPEG ≤1200px (OCR.space free giới hạn size)
+ * 4) OCR.space base64 → dịch → overlay
+ */
+(function () {
+  "use strict";
+
+  var overlays = [];
+
+  function clearOverlays() {
+    overlays.forEach(function (el) {
+      try {
+        el.remove();
+      } catch (e) {}
+    });
+    overlays = [];
   }
 
+  function placeOverlayViewport(text) {
+    var box = document.createElement("div");
+    box.className = "sr-img-ocr-overlay";
+    box.textContent = text;
+    box.style.cssText =
+      "position:fixed;left:12px;right:12px;bottom:80px;max-height:42vh;" +
+      "overflow:auto;z-index:2147483000;" +
+      "background:rgba(13,17,23,0.94);color:#e6edf3;padding:12px 14px;" +
+      "font:14px/1.5 system-ui,sans-serif;border-radius:12px;" +
+      "border:1px solid rgba(0,229,255,0.5);box-sizing:border-box;" +
+      "white-space:pre-wrap;box-shadow:0 8px 32px rgba(0,0,0,0.45);";
+    document.body.appendChild(box);
+    overlays.push(box);
+  }
+
+  function setExtUiVisible(vis) {
+    ["sr-bubble", "sr-menu", "sr-tts-panel", "sr-scroll-hud", "sr-toast"].forEach(
+      function (id) {
+        var el = document.getElementById(id);
+        if (el) el.style.visibility = vis ? "" : "hidden";
+      }
+    );
+    document.querySelectorAll(".sr-img-ocr-overlay").forEach(function (el) {
+      el.style.visibility = vis ? "" : "hidden";
+    });
+  }
+
+  function captureTab() {
+    return new Promise(function (resolve, reject) {
+      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+        reject(new Error("Extension context invalidated — F5 sau Reload"));
+        return;
+      }
+      chrome.runtime.sendMessage({ type: "CAPTURE_TAB" }, function (resp) {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (resp && resp.ok && resp.dataUrl) resolve(resp.dataUrl);
+        else
+          reject(
+            new Error((resp && resp.error) || "captureVisibleTab thất bại")
+          );
+      });
+    });
+  }
+
+  /** Nén + thu nhỏ để OCR.space free nhận được */
+  function shrinkDataUrl(dataUrl, maxW, quality) {
+    maxW = maxW || 1100;
+    quality = quality || 0.72;
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var scale = Math.min(1, maxW / img.width);
+          var w = Math.max(1, Math.round(img.width * scale));
+          var h = Math.max(1, Math.round(img.height * scale));
+          var c = document.createElement("canvas");
+          c.width = w;
+          c.height = h;
+          var ctx = c.getContext("2d");
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(c.toDataURL("image/jpeg", quality));
+        } catch (e) {
+          reject(e);
+        }
+      };
+      img.onerror = function () {
+        reject(new Error("Không decode được ảnh chụp"));
+      };
+      img.src = dataUrl;
+    });
+  }
+
+  function ocrSpaceData(dataUrl, lang) {
+    return new Promise(function (resolve, reject) {
+      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+        reject(new Error("Extension context invalidated"));
+        return;
+      }
+      chrome.runtime.sendMessage(
+        { type: "OCR_SPACE", dataUrl: dataUrl, lang: lang || "eng" },
+        function (resp) {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          if (resp && resp.ok) resolve(resp.text || "");
+          else reject(new Error((resp && resp.error) || "ocr fail"));
+        }
+      );
+    });
+  }
+
+  function translateText(text) {
+    var tl = localStorage.getItem("sr-target-lang") || "vi";
+    return new Promise(function (resolve) {
+      if (!text || text.trim().length < 1) {
+        resolve("");
+        return;
+      }
+      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+        resolve(text);
+        return;
+      }
+      chrome.runtime.sendMessage(
+        {
+          type: "MYMEMORY_TRANSLATE",
+          text: text.slice(0, 900),
+          langpair: "auto|" + tl,
+        },
+        function (resp) {
+          if (chrome.runtime.lastError) {
+            resolve(text);
+            return;
+          }
+          if (resp && resp.ok) resolve(resp.translatedText || text);
+          else resolve(text);
+        }
+      );
+    });
+  }
+
+  async function translateInRoot(root, opts) {
+    opts = opts || {};
+    clearOverlays();
+    if (!opts.silent) {
+      window.StoryReaderUI?.toast?.("Đang chụp + OCR vùng đang xem…", 25000);
+    }
+
+    var lastErr = "";
+    try {
+      setExtUiVisible(false);
+      await new Promise(function (r) {
+        setTimeout(r, 120);
+      });
+
+      var shot = await captureTab();
+      var small = await shrinkDataUrl(shot, 1100, 0.7);
+      var raw = await ocrSpaceData(small, "eng");
+      raw = (raw || "").replace(/\r/g, "").trim();
+
+      setExtUiVisible(true);
+
+      if (raw.length > 2) {
+        var out = await translateText(raw);
+        placeOverlayViewport(out || raw);
+        if (!opts.silent) {
+          window.StoryReaderUI?.toast?.("✓ Đã OCR dịch vùng đang xem", 4000);
+        }
+        return 1;
+      }
+      lastErr = "OCR không thấy chữ (ảnh mờ / không có text)";
+    } catch (e) {
+      setExtUiVisible(true);
+      lastErr = String(e && e.message ? e.message : e);
+      console.warn("[OCR]", lastErr);
+    }
+
+    if (!opts.silent) {
+      window.StoryReaderUI?.toast?.("OCR lỗi: " + lastErr.slice(0, 120), 6000);
+    }
+    return 0;
+  }
+
+  window.StoryImageTranslate = {
+    translateVisibleImages: function () {
+      return translateInRoot(document.body, { silent: false });
+    },
+    translateInRoot: translateInRoot,
+    clearOverlays: clearOverlays,
+  };
+  console.log("[Story Reader] image-translate.js loaded (capture+shrink OCR)");
+})();
+
+  }
 
   let toolbarVisible = false;
   let currentTheme = "dark";
@@ -1606,9 +2024,19 @@
     document.getElementById("sr-menu-translate")?.addEventListener("click", async () => {
       closeMenu();
       const label = document.getElementById("sr-menu-translate-text");
+      if (!window.StoryTranslator || !window.StoryImageTranslate) {
+        try {
+          await new Promise(function (resolve) {
+            chrome.runtime.sendMessage({ type: "INJECT_MODULES" }, function () {
+              resolve();
+            });
+          });
+          await new Promise(function (r) { setTimeout(r, 200); });
+        } catch (eInj) {}
+      }
       if (!window.StoryTranslator) {
-        console.warn("[SR] StoryTranslator missing — reload extension tại chrome://extensions");
-        toast("Module dịch chưa load. Vào chrome://extensions → Reload extension → F5 trang");
+        console.warn("[SR] StoryTranslator missing after inject");
+        toast("Module dịch chưa load. chrome://extensions → Reload → F5");
         return;
       }
       // Đã dịch → toggle gốc/dịch
@@ -1621,6 +2049,40 @@
         return;
       }
       if (label) label.textContent = "Đang dịch…";
+
+      // Truyện tranh (nettruyen / kagane…): OCR ảnh
+      var host = (location.hostname || "").toLowerCase();
+      var isMangaHost =
+        /kagane|nettruyen|truyenqq|truyentranh|mangadex|webtoon|asura|newtruyen|comick|manhwa|manhua/.test(
+          host
+        );
+      if (isMangaHost) {
+        if (!window.StoryImageTranslate) {
+          toast("Module OCR chưa load — Reload extension", 3500);
+          if (label) label.textContent = "Dịch trang";
+          return;
+        }
+        toast("Truyện tranh — OCR ảnh…", 15000);
+        try {
+          var n = await window.StoryImageTranslate.translateInRoot(null, {
+            loose: true,
+            silent: false,
+          });
+          if (label) label.textContent = n > 0 ? "Xem bản gốc" : "Dịch trang";
+          if (n > 0) {
+            try {
+              sessionStorage.setItem("sr-translate-wanted", "1");
+            } catch (e) {}
+          }
+          return;
+        } catch (e) {
+          console.warn("[SR] manga OCR", e);
+          toast("OCR lỗi: " + (e.message || e), 4000);
+          if (label) label.textContent = "Dịch trang";
+          return;
+        }
+      }
+
       const ok = await window.StoryTranslator.translatePage(
         localStorage.getItem("sr-target-lang") || "vi"
       );

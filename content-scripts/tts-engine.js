@@ -435,28 +435,43 @@
       if (nextBtn) return nextBtn;
     }
 
-    // freewebnovel.com / similar
+    // freewebnovel.com
     if (host.indexOf("freewebnovel") !== -1) {
       var fw =
         document.querySelector("a#next_chap") ||
         document.querySelector("a.chapternav.next") ||
         document.querySelector("a.nextchapter") ||
+        document.querySelector("a.next-chapter") ||
+        document.querySelector(".next-chapter") ||
+        document.querySelector(".btn-next") ||
         document.querySelector('a[title*="Next Chapter"]') ||
         document.querySelector('a[title*="Next"]') ||
         document.querySelector(".chapter-page-btn a:last-child") ||
         document.querySelector("#next") ||
         document.querySelector("a.next");
-      if (fw && fw.href && !String(fw.href).startsWith("javascript:")) {
-        if (isLikelySameStory(fw.href, path) || host.indexOf("freewebnovel") !== -1)
-          return fw;
+      // Nút chữ "Next Chapter"
+      if (!fw) {
+        var allA = document.querySelectorAll("a, button");
+        for (var fi = 0; fi < allA.length; fi++) {
+          var ft = (allA[fi].textContent || "").replace(/\s+/g, " ").trim();
+          if (/^next\s*chapter/i.test(ft) || /next\s*chapter\s*›?/i.test(ft)) {
+            fw = allA[fi];
+            break;
+          }
+        }
       }
-      // path /novel/slug/chapter-12 → chapter-13
+      if (fw) {
+        var fh = fw.getAttribute("href") || fw.href;
+        if (fh && !String(fh).startsWith("javascript:")) return fw;
+        // button với onclick / data-url
+        if (fw.click) return fw;
+      }
       try {
-        var fwm = path.match(/\/chapter[_-]?(\d+)/i);
+        var fwm = path.match(/\/chapter[_-]?(\d+)/i) || path.match(/-chapter-(\d+)/i);
         if (fwm) {
           var fwn = parseInt(fwm[1], 10) + 1;
-          var fwPath = path.replace(/\/chapter[_-]?\d+/i, "/chapter-" + fwn);
-          return { __srNavigate: location.origin + fwPath };
+          var fwPath = path.replace(/chapter[_-]?\d+/i, "chapter-" + fwn);
+          return { __srNavigate: location.origin + fwPath + (location.search || "") };
         }
       } catch (eFw) {}
     }
@@ -490,6 +505,23 @@
         return { __srNavigate: abs };
       }
     } catch (eOrv) {}
+
+    // Nút chữ Next Chapter (mọi site)
+    try {
+      var allLinks = document.querySelectorAll("a, button");
+      for (var ni = 0; ni < allLinks.length; ni++) {
+        var nt = (allLinks[ni].textContent || "").replace(/\s+/g, " ").trim();
+        if (/^next\s*chapter/i.test(nt) || nt === "Next ›" || nt === "Next >") {
+          var nh = allLinks[ni].getAttribute("href") || allLinks[ni].href;
+          if (nh && !String(nh).startsWith("javascript:")) {
+            if (isLikelySameStory(allLinks[ni].href || nh, path) || /chapter/i.test(nh))
+              return allLinks[ni];
+          } else if (allLinks[ni].tagName === "BUTTON" || allLinks[ni].onclick) {
+            return allLinks[ni];
+          }
+        }
+      }
+    } catch (eNc) {}
 
     // 1. rel=next
     var rel = document.querySelector('a[rel="next"]');
@@ -1097,12 +1129,37 @@
           setTimeout(r, 600);
         });
       }
+      // Dịch chapter mới load (webnovel infinite) trước khi đọc
+      try {
+        if (
+          sessionStorage.getItem("sr-translate-wanted") === "1" &&
+          window.StoryTranslator?.translateNewBlocksOnly
+        ) {
+          window.StoryReaderUI?.toast?.("Đang dịch đoạn mới…", 6000);
+          await window.StoryTranslator.translateNewBlocksOnly();
+          await new Promise(function (r) {
+            setTimeout(r, 300);
+          });
+        }
+      } catch (eTrInf) {
+        console.warn("[TTS] translate infinite", eTrInf);
+      }
+
       // Chờ content dài hơn (tối đa ~5s)
       var result = null;
       for (var w = 0; w < 10; w++) {
         result = window.StoryDetector.detectContent();
         if (result && result.text && result.text.length > prevTextLen + 80) break;
         window.scrollBy(0, 300);
+        // Mỗi lần load thêm → dịch đoạn mới
+        try {
+          if (
+            sessionStorage.getItem("sr-translate-wanted") === "1" &&
+            window.StoryTranslator?.translateNewBlocksOnly
+          ) {
+            await window.StoryTranslator.translateNewBlocksOnly();
+          }
+        } catch (e2) {}
         await new Promise(function (r) {
           setTimeout(r, 500);
         });
@@ -1479,8 +1536,12 @@
 
   function isInfiniteScrollHost() {
     var h = (location.hostname || "").toLowerCase();
+    // freewebnovel.com CHỨA chuỗi "webnovel.com" → phải loại trừ
+    if (h.indexOf("freewebnovel") !== -1) return false;
     return (
-      h.indexOf("webnovel.com") !== -1 ||
+      h === "www.webnovel.com" ||
+      h === "webnovel.com" ||
+      (h.indexOf("webnovel.com") !== -1 && h.indexOf("freewebnovel") === -1) ||
       h.indexOf("wattpad.com") !== -1 ||
       h.indexOf("royalroad.com") !== -1 ||
       h.indexOf("scribblehub.com") !== -1 ||
@@ -1492,6 +1553,14 @@
   function isMangaOrImageHost() {
     var h = (location.hostname || "").toLowerCase();
     return (
+      h.indexOf("kagane") !== -1 ||
+      h.indexOf("nettruyen") !== -1 ||
+      h.indexOf("truyenqq") !== -1 ||
+      h.indexOf("truyentranh") !== -1 ||
+      h.indexOf("mangadex") !== -1 ||
+      h.indexOf("webtoon") !== -1 ||
+      h.indexOf("asurascans") !== -1 ||
+      h.indexOf("newtruyen") !== -1 ||
       h.indexOf("kagane.to") !== -1 ||
       h.indexOf("kagane.") !== -1 ||
       h.indexOf("nettruyen") !== -1 ||
@@ -1568,7 +1637,7 @@
         return;
       }
 
-      // Manga / ảnh: không next URL — nhưng VẪN cuộn (nudge), không dừng 2s
+      // Manga / ảnh: thử next nếu có nút, không thì nudge
       if (isMangaOrImageHost()) {
         if (autoNextChapter) {
           var nextM = findNextChapterLink();

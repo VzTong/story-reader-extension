@@ -1,23 +1,36 @@
 {
   "manifest_version": 3,
   "name": "Story Reader & Translator",
-  "version": "0.6.2",
+  "version": "0.8.9",
   "description": "Đọc truyện, dịch trang, tự cuộn — hoạt động trên mọi trang web",
-  "permissions": ["storage", "scripting", "activeTab"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "background/service-worker.js"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "<all_urls>"
+      ],
       "js": [
         "libs/readability.js",
         "content-scripts/detector.js",
+        "content-scripts/translator.js",
+        "content-scripts/image-translate.js",
         "content-scripts/tts-engine.js",
         "content-scripts/floating-toolbar.js"
       ],
-      "css": ["ui/floating-toolbar.css"],
+      "css": [
+        "ui/floating-toolbar.css"
+      ],
       "run_at": "document_idle"
     }
   ],
@@ -32,8 +45,17 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["icons/*"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "icons/*",
+        "libs/*",
+        "libs/tesseract.min.js",
+        "libs/tesseract.worker.min.js",
+        "content-scripts/translator.js",
+        "content-scripts/image-translate.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

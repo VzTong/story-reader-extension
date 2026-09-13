@@ -89,18 +89,34 @@
     root.querySelectorAll(sel).forEach(function (el) {
       if (el.closest && el.closest("[id^='sr-']")) return;
       if (seen.has(el)) return;
-      // Bỏ khối chỉ chứa khối con cùng loại (tránh dịch 2 lần)
-      var childBlock = el.querySelector(sel);
-      if (childBlock && el.tagName !== "LI") {
-        // vẫn lấy nếu text trực tiếp ngoài child
-      }
       var text = (el.innerText || "").trim();
       if (text.length < 3) return;
-      // Bỏ navigation ngắn
       if (text.length < 8 && /next|prev|menu|share/i.test(text)) return;
       seen.add(el);
       list.push(el);
     });
+
+    // webnovel.com: .cha-words / đoạn trong chapter mới load
+    try {
+      document
+        .querySelectorAll(
+          ".cha-words, .cha-content, [class*='cha-words'], [class*='cha-paragraph'], .chapter_content p, .cha-words div"
+        )
+        .forEach(function (el) {
+          if (el.closest && el.closest("[id^='sr-']")) return;
+          if (seen.has(el)) return;
+          // Bỏ container lớn đã có p con trong list
+          if (el.querySelector && el.querySelector("p") && el.matches(".cha-words, .cha-content")) {
+            return;
+          }
+          var text = (el.innerText || "").trim();
+          if (text.length < 8) return;
+          if (text.length > 5000) return;
+          seen.add(el);
+          list.push(el);
+        });
+    } catch (eWn) {}
+
 
     // Fallback: khối text dài (nguontruyen hay 1 div + <br>)
     if (list.length < 3) {
@@ -136,24 +152,28 @@
 
   function translateChunk(text, langpair) {
     return new Promise(function (resolve, reject) {
-      if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-        reject(new Error("no chrome.runtime"));
+      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+        reject(new Error("Extension context invalidated — F5 trang sau khi Reload extension"));
         return;
       }
-      chrome.runtime.sendMessage(
-        { type: "MYMEMORY_TRANSLATE", text: text, langpair: langpair },
-        function (resp) {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
+      try {
+        chrome.runtime.sendMessage(
+          { type: "MYMEMORY_TRANSLATE", text: text, langpair: langpair },
+          function (resp) {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            if (resp && resp.ok && resp.translatedText != null) {
+              resolve(String(resp.translatedText));
+            } else {
+              reject(new Error((resp && resp.error) || "translate failed"));
+            }
           }
-          if (resp && resp.ok && resp.translatedText != null) {
-            resolve(String(resp.translatedText));
-          } else {
-            reject(new Error((resp && resp.error) || "translate failed"));
-          }
-        }
-      );
+        );
+      } catch (e) {
+        reject(new Error(String(e && e.message ? e.message : e)));
+      }
     });
   }
 
@@ -214,49 +234,61 @@
       } catch (eW) {
         window.__srWasSpeakingBeforeTranslate = false;
       }
+      var host = (location.hostname || "").toLowerCase();
+      var knownManga =
+        /kagane|nettruyen|truyenqq|truyentranh|mangadex|webtoon|asura|newtruyen|comick|manhwa|manhua/.test(
+          host
+        );
+
+      // Chỉ site manga mới OCR-only. Truyện chữ → dịch text.
       var blocks = collectBlocks();
-      // Truyện tranh: ít chữ + nhiều ảnh → ưu tiên OCR
-      var imgCount = 0;
-      try {
-        imgCount = document.querySelectorAll(
-          "img, canvas, [class*='viewer'] img, [class*='page'] img"
-        ).length;
-      } catch (e0) {}
       var textLen = 0;
       blocks.forEach(function (b) {
         textLen += ((b.innerText || "").trim()).length;
       });
-      // Truyện tranh: nhiều ảnh, ít chữ nội dung
-      var isManga = imgCount >= 2 && textLen < 800;
 
-      if (isManga || (imgCount >= 5 && textLen < 1500)) {
-        window.StoryReaderUI?.toast?.("Phát hiện ảnh/truyện tranh — OCR…", 10000);
+      var bigImgs = 0;
+      try {
+        document.querySelectorAll("img").forEach(function (img) {
+          if (img.closest && img.closest("[id^='sr-']")) return;
+          var w = Math.max(
+            img.naturalWidth || 0,
+            img.width || 0,
+            img.clientWidth || 0
+          );
+          var h = Math.max(
+            img.naturalHeight || 0,
+            img.height || 0,
+            img.clientHeight || 0
+          );
+          if (w >= 200 && h >= 200) bigImgs++;
+        });
+      } catch (e0) {}
+
+      // Manga host HOẶC (≥3 ảnh lớn VÀ rất ít chữ)
+      var isManga = knownManga || (bigImgs >= 3 && textLen < 200);
+
+      if (isManga && window.StoryImageTranslate) {
+        window.StoryReaderUI?.toast?.("Truyện tranh — OCR ảnh…", 15000);
         try {
-          if (window.StoryImageTranslate) {
-            var n = await window.StoryImageTranslate.translateInRoot(null, {
-              loose: true,
-              silent: false,
-            });
-            translateWanted = true;
-            try {
-              sessionStorage.setItem("sr-translate-wanted", "1");
-            } catch (e1) {}
-            if (n > 0) {
-              // Resume TTS nếu đang nghe (overlay không vào TTS; vẫn ok)
-              return true;
-            }
-          }
+          var n = await window.StoryImageTranslate.translateInRoot(null, {
+            loose: true,
+            silent: false,
+          });
+          translateWanted = true;
+          try {
+            sessionStorage.setItem("sr-translate-wanted", "1");
+          } catch (e1) {}
+          if (n > 0) return true;
+          window.StoryReaderUI?.toast?.(
+            "OCR chưa đọc được chữ trong ảnh. Thử cuộn để ảnh hiện rõ rồi dịch lại.",
+            4500
+          );
         } catch (e2) {
           console.warn("[Translate] manga OCR", e2);
+          window.StoryReaderUI?.toast?.("OCR lỗi: " + (e2.message || e2), 4000);
         }
-        // Nếu OCR fail nhưng còn text → dịch text bên dưới
-        if (!blocks.length || textLen < 40) {
-          window.StoryReaderUI?.toast?.(
-            "OCR chưa chạy được. Reload extension (cần libs/tesseract).",
-            4000
-          );
-          return false;
-        }
+        return false;
       }
 
       if (!blocks.length) {
@@ -305,6 +337,14 @@
         } catch (err) {
           failCount++;
           console.warn("[Translate] block fail", err);
+          if (String(err.message || err).indexOf("invalidated") !== -1) {
+            abortFlag = true;
+            window.StoryReaderUI?.toast?.(
+              "Extension đã Reload — F5 trang rồi dịch lại",
+              5000
+            );
+            break;
+          }
         }
         if ((i + 1) % 3 === 0 || i + 1 === blocks.length) {
           window.StoryReaderUI?.toast?.(
@@ -436,17 +476,28 @@
     }
   }
 
+  /**
+   * Dịch các khối mới (chapter load thêm trên webnovel).
+   * Trả về Promise<number> — số đoạn đã dịch.
+   */
   function translateNewBlocksOnly() {
-    if (isBusy || !isTranslateWanted()) return;
+    if (!isTranslateWanted()) return Promise.resolve(0);
     var blocks = collectBlocks();
     var fresh = blocks.filter(function (el) {
       return !originalMap.has(el);
     });
-    if (!fresh.length) return;
+    if (!fresh.length) return Promise.resolve(0);
+    if (isBusy) {
+      // Chờ lượt đang chạy xong rồi thử lại
+      return new Promise(function (resolve) {
+        setTimeout(function () {
+          translateNewBlocksOnly().then(resolve);
+        }, 1200);
+      });
+    }
 
-    (async function () {
-      if (isBusy) return;
-      isBusy = true;
+    isBusy = true;
+    return (async function () {
       try {
         var targetLang = localStorage.getItem("sr-target-lang") || "vi";
         var sample = fresh
@@ -459,6 +510,7 @@
         if (source === targetLang) source = source === "vi" ? "en" : source;
         var langpair = source + "|" + targetLang;
         var ok = 0;
+        console.log("[Translate] auto +" + fresh.length + " khối mới");
         for (var i = 0; i < fresh.length; i++) {
           var el = fresh[i];
           var text = (el.innerText || "").trim();
@@ -477,6 +529,7 @@
         if (ok) {
           window.StoryReaderUI?.toast?.("✓ Tự dịch +" + ok + " đoạn mới", 2500);
         }
+        return ok;
       } finally {
         isBusy = false;
       }
@@ -500,22 +553,33 @@
     if (autoObs) return;
     autoObs = new MutationObserver(function () {
       clearTimeout(observerTimer);
-      observerTimer = setTimeout(translateNewBlocksOnly, 900);
+      observerTimer = setTimeout(function () {
+        translateNewBlocksOnly();
+      }, 600);
     });
     try {
       autoObs.observe(document.body, { childList: true, subtree: true });
     } catch (e) {}
 
     var lastH = document.documentElement.scrollHeight;
+    var lastCha = 0;
+    try {
+      lastCha = document.querySelectorAll(".cha-words, .cha-content").length;
+    } catch (e0) {}
     clearInterval(window.__srTrPoll);
     window.__srTrPoll = setInterval(function () {
-      if (!isTranslateWanted() || isBusy) return;
+      if (!isTranslateWanted()) return;
       var h = document.documentElement.scrollHeight;
-      if (h > lastH + 150) {
+      var cha = 0;
+      try {
+        cha = document.querySelectorAll(".cha-words, .cha-content").length;
+      } catch (e1) {}
+      if (h > lastH + 80 || cha > lastCha) {
         lastH = h;
+        lastCha = cha;
         translateNewBlocksOnly();
       }
-    }, 1800);
+    }, 1200);
 
     if (!window.__srTrScrollBound) {
       window.__srTrScrollBound = true;
@@ -552,6 +616,7 @@
     isTranslateWanted: isTranslateWanted,
     startAutoTranslateObserver: startAutoTranslateObserver,
     collectBlocks: collectBlocks,
+    translateNewBlocksOnly: translateNewBlocksOnly,
     abort: abort,
     clearTranslateWanted: clearTranslateWanted,
   };
