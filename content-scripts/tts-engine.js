@@ -2045,7 +2045,12 @@
       ) {
         speakNext();
       }
+      // Cập nhật list câu + progress trên panel
+      try {
+        window.StoryReaderUI?.buildSentenceList?.();
+      } catch (eList) {}
       window.StoryReaderUI?.updateProgress?.();
+      window.StoryReaderUI?.highlightSentenceInPanel?.(currentIndex);
       return added.length;
     } catch (e) {
       console.warn("[TTS] extendQueueFromPage", e);
