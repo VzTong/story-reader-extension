@@ -1,13 +1,13 @@
 /**
- * OCR + dịch chữ trong ảnh truyện tranh (Phase 1: CV bubble).
+ * Dịch chữ trong truyện tranh — không popup to.
  *
- * Chỉ dùng trên manga. Không gọi từ luồng dịch text novel.
+ * Hiển thị: overlay nhỏ đè lên từng bubble (nền trắng + chữ dịch).
  *
- * 1) captureVisibleTab (tránh CORS CDN)
- * 2) CV threshold → bbox bubble
- * 3) OCR.space (chỉ eng — free key không nhận "vie")
- * 4) Dịch → overlay
- * Giới hạn request + dừng khi 429.
+ * Pipeline free (không cần key):
+ *   capture → CV bubble → OCR.space helloworld → Google gtx dịch
+ * Có Gemini key (tuỳ chọn): 1 request Vision OCR+dịch chính xác hơn.
+ *
+ * localStorage: sr-gemini-key, sr-ocr-key, sr-target-lang
  */
 (function () {
   "use strict";
@@ -39,9 +39,29 @@
 
   function isMangaHost() {
     var host = (location.hostname || "").toLowerCase();
-    return /kagane|nettruyen|truyenqq|truyentranh|mangadex|webtoon|asura|newtruyen|comick|manhwa|manhua/.test(
+    return /kagane|nettruyen|truyenqq|truyentranh|mangadex|webtoon|asura|newtruyen|comick|manhwa|manhua|toonily|asurascans/.test(
       host
     );
+  }
+
+  function getGeminiKey() {
+    try {
+      return (localStorage.getItem("sr-gemini-key") || "").trim();
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function getOcrKey() {
+    try {
+      return (localStorage.getItem("sr-ocr-key") || "").trim();
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function targetLang() {
+    return localStorage.getItem("sr-target-lang") || "vi";
   }
 
   function captureTab() {
@@ -53,6 +73,35 @@
         if (resp && resp.ok && resp.dataUrl) resolve(resp.dataUrl);
         else reject(new Error((resp && resp.error) || "capture fail"));
       });
+    });
+  }
+
+  function shrinkDataUrl(dataUrl, maxW, quality) {
+    maxW = maxW || 1280;
+    quality = quality || 0.86;
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var scale = Math.min(1, maxW / img.width);
+          var w = Math.max(1, Math.round(img.width * scale));
+          var h = Math.max(1, Math.round(img.height * scale));
+          var c = document.createElement("canvas");
+          c.width = w;
+          c.height = h;
+          var ctx = c.getContext("2d");
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(c.toDataURL("image/jpeg", quality));
+        } catch (e) {
+          reject(e);
+        }
+      };
+      img.onerror = function () {
+        reject(new Error("decode fail"));
+      };
+      img.src = dataUrl;
     });
   }
 
@@ -90,7 +139,7 @@
     for (var i = 0; i < n; i++) {
       var o = i * 4;
       var g = (d[o] * 0.299 + d[o + 1] * 0.587 + d[o + 2] * 0.114) | 0;
-      mask[i] = g >= 200 ? 1 : 0;
+      mask[i] = g >= 198 ? 1 : 0;
     }
     var mask2 = new Uint8Array(n);
     for (var y = 1; y < sh - 1; y++) {
@@ -101,12 +150,10 @@
       }
     }
     mask = mask2;
-
     var visited = new Uint8Array(n);
     var boxes = [];
-    var minArea = Math.max(500, (sw * sh) / 100);
+    var minArea = Math.max(400, (sw * sh) / 120);
     var maxArea = sw * sh * 0.4;
-
     for (var i = 0; i < n; i++) {
       if (!mask[i] || visited[i]) continue;
       var qx = [i % sw];
@@ -116,8 +163,8 @@
       var minX = qx[0],
         maxX = qx[0],
         minY = qy[0],
-        maxY = qy[0];
-      var area = 0;
+        maxY = qy[0],
+        area = 0;
       while (qi < qx.length) {
         var cx = qx[qi];
         var cy = qy[qi];
@@ -127,15 +174,15 @@
         if (cx > maxX) maxX = cx;
         if (cy < minY) minY = cy;
         if (cy > maxY) maxY = cy;
-        var neigh = [
+        var dirs = [
           [cx - 1, cy],
           [cx + 1, cy],
           [cx, cy - 1],
           [cx, cy + 1],
         ];
         for (var k = 0; k < 4; k++) {
-          var nx = neigh[k][0];
-          var ny = neigh[k][1];
+          var nx = dirs[k][0];
+          var ny = dirs[k][1];
           if (nx < 0 || ny < 0 || nx >= sw || ny >= sh) continue;
           var ni = ny * sw + nx;
           if (!mask[ni] || visited[ni]) continue;
@@ -147,27 +194,28 @@
       if (area < minArea || area > maxArea) continue;
       var bw = maxX - minX + 1;
       var bh = maxY - minY + 1;
-      if (bw < 24 || bh < 18) continue;
+      if (bw < 20 || bh < 14) continue;
       var aspect = bw / bh;
-      if (aspect > 7 || aspect < 0.18) continue;
-      if (area / (bw * bh) < 0.28) continue;
+      if (aspect > 7.5 || aspect < 0.15) continue;
+      if (area / (bw * bh) < 0.22) continue;
       var inv = 1 / scale;
       var pad = 4 * inv;
-      var bx = Math.max(0, minX * inv - pad);
-      var by = Math.max(0, minY * inv - pad);
-      var bx2 = Math.min(canvas.width, (maxX + 1) * inv + pad);
-      var by2 = Math.min(canvas.height, (maxY + 1) * inv + pad);
       boxes.push({
-        x: bx | 0,
-        y: by | 0,
-        w: (bx2 - bx) | 0,
-        h: (by2 - by) | 0,
+        x: Math.max(0, minX * inv - pad) | 0,
+        y: Math.max(0, minY * inv - pad) | 0,
+        w:
+          (Math.min(canvas.width, (maxX + 1) * inv + pad) -
+            Math.max(0, minX * inv - pad)) |
+          0,
+        h:
+          (Math.min(canvas.height, (maxY + 1) * inv + pad) -
+            Math.max(0, minY * inv - pad)) |
+          0,
       });
     }
     boxes.sort(function (a, b) {
       return a.y - b.y || a.x - b.x;
     });
-    // merge overlap
     var merged = [];
     boxes.forEach(function (b) {
       var hit = null;
@@ -181,7 +229,7 @@
           0,
           Math.min(b.y + b.h, m.y + m.h) - Math.max(b.y, m.y)
         );
-        if (ox * oy > 0.4 * Math.min(b.w * b.h, m.w * m.h)) {
+        if (ox * oy > 0.35 * Math.min(b.w * b.h, m.w * m.h)) {
           hit = m;
           break;
         }
@@ -197,20 +245,14 @@
         hit.h = y2 - y1;
       } else merged.push(b);
     });
-    if (merged.length > 6) merged = merged.slice(0, 6);
-    console.log(
-      "[OCR-CV] bubbles",
-      merged.length,
-      "on",
-      canvas.width + "x" + canvas.height
-    );
+    if (merged.length > 10) merged = merged.slice(0, 10);
     return merged;
   }
 
   function cropToDataUrl(canvas, box) {
     var w = Math.max(1, box.w);
     var h = Math.max(1, box.h);
-    var scale = w < 180 ? 2 : w < 360 ? 1.3 : w > 600 ? 600 / w : 1;
+    var scale = w < 160 ? 2.2 : w < 320 ? 1.4 : w > 600 ? 600 / w : 1;
     var c = document.createElement("canvas");
     c.width = Math.max(1, Math.round(w * scale));
     c.height = Math.max(1, Math.round(h * scale));
@@ -218,32 +260,43 @@
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, c.width, c.height);
     ctx.drawImage(canvas, box.x, box.y, w, h, 0, 0, c.width, c.height);
-    var q = 0.82;
+    var q = 0.88;
     var out = c.toDataURL("image/jpeg", q);
-    while (out.length > 400000 && q > 0.5) {
-      q -= 0.1;
+    while (out.length > 320000 && q > 0.5) {
+      q -= 0.08;
       out = c.toDataURL("image/jpeg", q);
     }
     return out;
   }
 
-  function ocrSpaceData(dataUrl) {
+  function ocrGemini(dataUrl, tl) {
     return new Promise(function (resolve, reject) {
       if (!runtimeOk()) return reject(new Error("context invalidated"));
-      if (Date.now() < ocrBackoffUntil) {
-        return reject(new Error("OCR rate-limit — đợi " + Math.ceil((ocrBackoffUntil - Date.now()) / 1000) + "s"));
-      }
-      var apiKey = "";
-      try {
-        apiKey = localStorage.getItem("sr-ocr-key") || "";
-      } catch (e) {}
-      // Chỉ eng — free OCR.space từ chối "vie" (E201)
+      var key = getGeminiKey();
+      if (!key) return reject(new Error("no gemini key"));
+      chrome.runtime.sendMessage(
+        { type: "OCR_GEMINI", dataUrl: dataUrl, apiKey: key, targetLang: tl },
+        function (resp) {
+          if (chrome.runtime.lastError)
+            return reject(new Error(chrome.runtime.lastError.message));
+          if (resp && resp.ok) resolve(resp.text || "");
+          else reject(new Error((resp && resp.error) || "gemini fail"));
+        }
+      );
+    });
+  }
+
+  function ocrSpace(dataUrl) {
+    return new Promise(function (resolve, reject) {
+      if (!runtimeOk()) return reject(new Error("context invalidated"));
+      if (Date.now() < ocrBackoffUntil)
+        return reject(new Error("OCR rate-limit"));
       chrome.runtime.sendMessage(
         {
           type: "OCR_SPACE",
           dataUrl: dataUrl,
           lang: "eng",
-          apiKey: apiKey,
+          apiKey: getOcrKey(),
         },
         function (resp) {
           if (chrome.runtime.lastError)
@@ -251,9 +304,7 @@
           if (resp && resp.ok) resolve(resp.text || "");
           else {
             var err = (resp && resp.error) || "ocr fail";
-            if (String(err).indexOf("429") !== -1 || String(err).indexOf("503") !== -1) {
-              ocrBackoffUntil = Date.now() + 60000;
-            }
+            if (/429|503/.test(String(err))) ocrBackoffUntil = Date.now() + 90000;
             reject(new Error(err));
           }
         }
@@ -261,8 +312,8 @@
     });
   }
 
-  function translateText(text) {
-    var tl = localStorage.getItem("sr-target-lang") || "vi";
+  function translateText(text, tl) {
+    tl = tl || targetLang();
     return new Promise(function (resolve) {
       if (!text || text.trim().length < 1) return resolve("");
       if (!runtimeOk()) return resolve(text);
@@ -274,26 +325,50 @@
         },
         function (resp) {
           if (chrome.runtime.lastError) return resolve(text);
-          if (resp && resp.ok) resolve(resp.translatedText || text);
+          if (resp && resp.ok && resp.translatedText)
+            resolve(String(resp.translatedText));
           else resolve(text);
         }
       );
     });
   }
 
-  function placeOverlayViewport(text) {
-    var box = document.createElement("div");
-    box.className = "sr-img-ocr-overlay";
-    box.textContent = text;
-    box.style.cssText =
-      "position:fixed;left:12px;right:12px;bottom:80px;max-height:42vh;" +
-      "overflow:auto;z-index:2147483000;" +
-      "background:rgba(13,17,23,0.94);color:#e6edf3;padding:12px 14px;" +
-      "font:14px/1.5 system-ui,sans-serif;border-radius:12px;" +
-      "border:1px solid rgba(0,229,255,0.5);box-sizing:border-box;" +
-      "white-space:pre-wrap;";
-    document.body.appendChild(box);
-    overlays.push(box);
+  /** Overlay đè đúng vị trí bubble trên viewport (không popup to) */
+  function placeBubbleOverlay(box, canvasW, canvasH, text) {
+    var sx = window.innerWidth / canvasW;
+    var sy = window.innerHeight / canvasH;
+    // capture = viewport → map 1:1 theo tỉ lệ canvas/capture
+    var left = box.x * (window.innerWidth / canvasW);
+    var top = box.y * (window.innerHeight / canvasH);
+    var width = Math.max(48, box.w * (window.innerWidth / canvasW));
+    var height = Math.max(28, box.h * (window.innerHeight / canvasH));
+
+    var el = document.createElement("div");
+    el.className = "sr-img-ocr-overlay sr-bubble-overlay";
+    el.textContent = text;
+    el.style.cssText =
+      "position:fixed;left:" +
+      Math.round(left) +
+      "px;top:" +
+      Math.round(top) +
+      "px;width:" +
+      Math.round(width) +
+      "px;min-height:" +
+      Math.round(height * 0.5) +
+      "px;max-height:" +
+      Math.round(height * 1.4) +
+      "px;overflow:auto;z-index:2147483000;" +
+      "background:rgba(255,255,255,0.94);color:#111;" +
+      "padding:4px 6px;font:12px/1.35 system-ui,sans-serif;" +
+      "border-radius:6px;border:1px solid rgba(0,0,0,0.12);" +
+      "box-sizing:border-box;white-space:pre-wrap;pointer-events:auto;" +
+      "box-shadow:0 2px 8px rgba(0,0,0,0.18);";
+    el.title = "Click để ẩn";
+    el.addEventListener("click", function () {
+      el.remove();
+    });
+    document.body.appendChild(el);
+    overlays.push(el);
   }
 
   function sleep(ms) {
@@ -302,16 +377,32 @@
     });
   }
 
-  /**
-   * @param root ignored
-   * @param opts.silent — không toast (vẫn không chạy trên non-manga)
-   * @param opts.force — bỏ qua check host (hiếm)
-   */
+  function looksSameLang(a, b) {
+    a = (a || "").replace(/\s+/g, "").toLowerCase();
+    b = (b || "").replace(/\s+/g, "").toLowerCase();
+    if (!a || !b) return false;
+    if (a === b) return true;
+    var n = Math.min(40, a.length, b.length);
+    return n > 12 && a.slice(0, n) === b.slice(0, n);
+  }
+
+  async function ensureTranslated(raw, tl) {
+    raw = (raw || "").trim();
+    if (!raw) return "";
+    var out = await translateText(raw, tl);
+    // Nếu API trả về gần như gốc mà target khác khả năng nguồn — thử lại không đổi
+    if (looksSameLang(raw, out) && tl !== "vi") {
+      // raw có thể đã đúng ngôn ngữ đích
+      return out;
+    }
+    // Truyện đã tiếng Việt + target vi → không phải lỗi, trả nguyên
+    return out || raw;
+  }
+
   async function translateInRoot(root, opts) {
     opts = opts || {};
     clearOverlays();
 
-    // Chặn OCR trên truyện chữ / silent gọi nhầm
     if (!opts.force && !isMangaHost()) {
       var bigImgs = 0;
       try {
@@ -323,84 +414,132 @@
         });
       } catch (e0) {}
       if (bigImgs < 3) {
-        if (!opts.silent) {
-          window.StoryReaderUI?.toast?.(
-            "Không phải trang truyện tranh — bỏ OCR",
-            2500
-          );
-        }
+        if (!opts.silent)
+          window.StoryReaderUI?.toast?.("Không phải trang truyện tranh", 2500);
         return 0;
       }
     }
 
+    var tl = targetLang();
+    var geminiKey = getGeminiKey();
     if (!opts.silent) {
-      window.StoryReaderUI?.toast?.("OCR vùng đang xem (CV)…", 25000);
+      window.StoryReaderUI?.toast?.(
+        geminiKey ? "AI OCR bubble…" : "OCR bubble (free)…",
+        25000
+      );
     }
 
     var lastErr = "";
-    var total = 0;
+    var placed = 0;
+
     try {
       setExtUiVisible(false);
-      await sleep(150);
+      await sleep(120);
       var shot = await captureTab();
       setExtUiVisible(true);
 
       var canvas = await dataUrlToCanvas(shot);
       var boxes = detectBubbles(canvas);
-      if (!boxes.length) {
-        // vùng giữa màn (1 crop lớn) — chỉ khi manga
-        boxes = [
-          {
-            x: (canvas.width * 0.08) | 0,
-            y: (canvas.height * 0.1) | 0,
-            w: (canvas.width * 0.84) | 0,
-            h: (canvas.height * 0.7) | 0,
-          },
-        ];
-      }
+      console.log("[OCR] bubbles", boxes.length, "lang→", tl);
 
-      var texts = [];
-      var maxCrops = Math.min(boxes.length, 4);
-      for (var i = 0; i < maxCrops; i++) {
-        if (Date.now() < ocrBackoffUntil) {
-          lastErr = "OCR rate-limit (429) — thử lại sau 1 phút hoặc set sr-ocr-key";
-          break;
-        }
+      // --- Gemini: OCR từng vùng hoặc full rồi split ---
+      if (geminiKey && boxes.length) {
         try {
-          var dataUrl = cropToDataUrl(canvas, boxes[i]);
-          var raw = (await ocrSpaceData(dataUrl)).replace(/\r/g, "").trim();
-          if (raw.length > 2) {
-            texts.push(await translateText(raw));
-            total++;
+          // Gửi full viewport 1 lần (đỡ tốn quota) + map text theo dòng
+          var small = await shrinkDataUrl(shot, 1200, 0.85);
+          var aiText = (await ocrGemini(small, tl)).replace(/\r/g, "").trim();
+          aiText = aiText.replace(/^```[\s\S]*?\n/, "").replace(/```$/, "").trim();
+          var lines = aiText
+            .split(/\n+/)
+            .map(function (l) {
+              return l.replace(/^[\d\-•\*]+\s*/, "").trim();
+            })
+            .filter(function (l) {
+              return l.length > 1;
+            });
+          // Gán dòng → bubble theo thứ tự
+          var n = Math.min(boxes.length, lines.length);
+          for (var i = 0; i < n; i++) {
+            var line = lines[i];
+            // Gemini đã dịch theo prompt; nếu vẫn giống OCR-style raw thì dịch lại
+            var out = await ensureTranslated(line, tl);
+            placeBubbleOverlay(boxes[i], canvas.width, canvas.height, out);
+            placed++;
           }
-          await sleep(400); // giảm 429
-        } catch (eOne) {
-          lastErr = String(eOne.message || eOne);
-          console.warn("[OCR-CV] crop", lastErr);
-          if (lastErr.indexOf("429") !== -1 || lastErr.indexOf("503") !== -1) break;
+          // Thừa dòng → gộp bubble cuối
+          if (lines.length > boxes.length && boxes.length) {
+            var rest = lines.slice(boxes.length).join(" ");
+            if (rest) {
+              var last = overlays[overlays.length - 1];
+              if (last) last.textContent += "\n" + rest;
+            }
+          }
+        } catch (eG) {
+          lastErr = String(eG.message || eG);
+          console.warn("[OCR] Gemini", lastErr);
         }
       }
 
-      if (texts.length) {
-        placeOverlayViewport(texts.join("\n\n——\n\n"));
+      // --- Free: OCR từng bubble + dịch gtx ---
+      if (!placed) {
+        if (!boxes.length) {
+          boxes = [
+            {
+              x: (canvas.width * 0.1) | 0,
+              y: (canvas.height * 0.12) | 0,
+              w: (canvas.width * 0.8) | 0,
+              h: (canvas.height * 0.55) | 0,
+            },
+          ];
+        }
+        var maxC = Math.min(boxes.length, 5);
+        for (var j = 0; j < maxC; j++) {
+          if (Date.now() < ocrBackoffUntil) {
+            lastErr = "OCR rate-limit — thêm Gemini key trong Cài đặt";
+            break;
+          }
+          try {
+            var crop = cropToDataUrl(canvas, boxes[j]);
+            var raw = (await ocrSpace(crop)).replace(/\r/g, "").trim();
+            if (raw.length < 2) continue;
+            var translated = await ensureTranslated(raw, tl);
+            placeBubbleOverlay(
+              boxes[j],
+              canvas.width,
+              canvas.height,
+              translated
+            );
+            placed++;
+            await sleep(450);
+          } catch (eOne) {
+            lastErr = String(eOne.message || eOne);
+            if (/429|503|rate/.test(lastErr)) break;
+          }
+        }
       }
     } catch (e) {
       setExtUiVisible(true);
       lastErr = String(e && e.message ? e.message : e);
-      console.warn("[OCR-CV]", lastErr);
+      console.warn("[OCR]", lastErr);
     }
 
     if (!opts.silent) {
-      if (total > 0) {
-        window.StoryReaderUI?.toast?.("✓ OCR dịch " + total + " vùng", 4000);
+      if (placed > 0) {
+        var note =
+          tl === "vi"
+            ? "✓ " +
+              placed +
+              " bubble (truyện đã tiếng Việt + đích vi → giữ nguyên chữ)"
+            : "✓ Đã dịch " + placed + " bubble → " + tl;
+        window.StoryReaderUI?.toast?.(note, 4000);
       } else {
         window.StoryReaderUI?.toast?.(
-          "OCR: " + (lastErr || "không đọc được chữ").slice(0, 120),
+          "OCR: " + (lastErr || "không đọc được").slice(0, 120),
           5000
         );
       }
     }
-    return total;
+    return placed;
   }
 
   window.StoryImageTranslate = {
@@ -410,5 +549,5 @@
     translateInRoot: translateInRoot,
     clearOverlays: clearOverlays,
   };
-  console.log("[Story Reader] image-translate.js loaded (capture-only CV OCR)");
+  console.log("[Story Reader] image-translate.js loaded (bubble overlay, no popup)");
 })();

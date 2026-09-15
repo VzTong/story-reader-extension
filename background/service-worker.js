@@ -288,6 +288,104 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  
+  /**
+   * Gemini Vision — OCR + dịch bubble truyện tranh (1 request).
+   * msg: { dataUrl, apiKey, targetLang }
+   * Key free: https://aistudio.google.com/apikey
+   */
+  if (msg.type === "OCR_GEMINI") {
+    const dataUrl = String(msg.dataUrl || "");
+    const apiKey = String(msg.apiKey || "").trim();
+    const targetLang = String(msg.targetLang || "vi");
+    if (!dataUrl || !apiKey) {
+      sendResponse({ ok: false, error: "missing image or apiKey" });
+      return true;
+    }
+    (async () => {
+      try {
+        const m = dataUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+        if (!m) {
+          sendResponse({ ok: false, error: "bad dataUrl" });
+          return;
+        }
+        const mime = m[1];
+        const b64 = m[2];
+        const langName =
+          targetLang === "vi"
+            ? "Vietnamese"
+            : targetLang === "en"
+              ? "English"
+              : targetLang === "zh" || targetLang === "zh-CN"
+                ? "Chinese"
+                : targetLang;
+        const prompt =
+          "You are reading a manga/manhwa/webtoon page screenshot. " +
+          "Extract ALL text inside speech bubbles and captions, in reading order " +
+          "(top-to-bottom, then left-to-right unless it's Japanese manga right-to-left). " +
+          "Then translate each line into " +
+          langName +
+          ". " +
+          "Output ONLY the translated lines, one speech bubble per line. " +
+          "No numbering, no markdown, no commentary.";
+        const url =
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" +
+          encodeURIComponent(apiKey);
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: prompt },
+                  { inline_data: { mime_type: mime, data: b64 } },
+                ],
+              },
+            ],
+            generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
+          }),
+        });
+        if (!res.ok) {
+          const errBody = await res.text().catch(function () {
+            return "";
+          });
+          sendResponse({
+            ok: false,
+            error: "gemini http " + res.status + " " + errBody.slice(0, 120),
+          });
+          return;
+        }
+        const data = await res.json();
+        const parts =
+          data &&
+          data.candidates &&
+          data.candidates[0] &&
+          data.candidates[0].content &&
+          data.candidates[0].content.parts;
+        let text = "";
+        if (parts) {
+          for (let i = 0; i < parts.length; i++) {
+            if (parts[i].text) text += parts[i].text;
+          }
+        }
+        text = (text || "").trim();
+        if (!text) {
+          sendResponse({ ok: false, error: "gemini empty" });
+          return;
+        }
+        sendResponse({ ok: true, text: text });
+      } catch (e) {
+        console.warn("[SR] OCR_GEMINI", e);
+        sendResponse({
+          ok: false,
+          error: String(e && e.message ? e.message : e),
+        });
+      }
+    })();
+    return true;
+  }
+
   if (msg.type === "OCR_SPACE") {
     const dataUrl = String(msg.dataUrl || "");
     const lang = msg.lang || "eng";

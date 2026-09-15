@@ -1224,3 +1224,43 @@ body.sr-theme-light #sr-hud-status,
 #sr-scroll-hud.sr-theme-light #sr-hud-status {
   color: #656d76 !important;
 }
+
+
+/* OCR help in settings */
+#sr-tts-panel .sr-info-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--sr-border);
+  background: var(--sr-accent-soft);
+  color: var(--sr-accent);
+  font: 600 12px/1 var(--sr-font);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+#sr-tts-panel .sr-info-btn:hover {
+  background: var(--sr-accent);
+  color: #0d1117;
+  border-color: var(--sr-accent);
+}
+#sr-tts-panel .sr-help-panel {
+  margin-top: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--sr-muted);
+  background: var(--sr-bg);
+  border: 1px solid var(--sr-border-soft);
+  border-radius: 10px;
+}
+#sr-tts-panel .sr-help-panel a {
+  color: var(--sr-accent);
+  text-decoration: none;
+}
+#sr-tts-panel .sr-help-panel a:hover {
+  text-decoration: underline;
+}
+#sr-tts-panel .sr-help-panel strong {
+  color: var(--sr-text);
+}
