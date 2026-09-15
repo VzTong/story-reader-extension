@@ -2198,9 +2198,21 @@
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
     const val = `rgba(${r}, ${g}, ${b}, 0.45)`;
-    // Set cả html + body để theme light không đè lại
+    const soft = `rgba(${r}, ${g}, ${b}, 0.55)`;
+    // Highlight trang + thanh cuộn list/settings cùng màu
     document.documentElement.style.setProperty("--sr-highlight", val);
     document.body.style.setProperty("--sr-highlight", val);
+    document.documentElement.style.setProperty("--sr-scroll-thumb", hex);
+    document.documentElement.style.setProperty("--sr-scroll-thumb-soft", soft);
+    document.body.style.setProperty("--sr-scroll-thumb", hex);
+    document.body.style.setProperty("--sr-scroll-thumb-soft", soft);
+    ["sr-tts-panel", "sr-menu", "sr-bubble", "sr-scroll-hud"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.style.setProperty("--sr-highlight", val);
+      el.style.setProperty("--sr-scroll-thumb", hex);
+      el.style.setProperty("--sr-scroll-thumb-soft", soft);
+    });
     const colorEl = document.getElementById("sr-highlight-color");
     if (colorEl && colorEl.value !== hex) colorEl.value = hex;
   }
