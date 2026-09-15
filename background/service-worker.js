@@ -213,11 +213,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             headers["Origin"] = new URL(referer).origin;
           } catch (e) {}
         }
-        const res = await fetch(url, {
+        let res = await fetch(url, {
           credentials: "omit",
           redirect: "follow",
           headers: headers,
         });
+        if (!res.ok && referer) {
+          // Thử không Referer
+          res = await fetch(url, {
+            credentials: "omit",
+            redirect: "follow",
+            headers: {
+              Accept: headers.Accept,
+              "User-Agent": headers["User-Agent"],
+            },
+          });
+        }
         if (!res.ok) {
           sendResponse({ ok: false, error: "http " + res.status });
           return;
@@ -280,35 +291,78 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "OCR_SPACE") {
     const dataUrl = String(msg.dataUrl || "");
     const lang = msg.lang || "eng";
+    const apiKey = String(msg.apiKey || "").trim() || "helloworld";
     if (!dataUrl) {
       sendResponse({ ok: false, error: "no image" });
       return true;
     }
     (async () => {
       async function callOcr(engine) {
-        const form = new FormData();
-        form.append("base64Image", dataUrl);
-        form.append("language", lang);
-        form.append("isOverlayRequired", "false");
-        form.append("OCREngine", String(engine));
-        form.append("scale", "true");
-        form.append("detectOrientation", "true");
-        form.append("filetype", "JPG");
-        const res = await fetch("https://api.ocr.space/parse/image", {
-          method: "POST",
-          headers: { apikey: "helloworld" },
-          body: form,
-        });
-        const data = await res.json();
-        return data;
+        // FormData
+        try {
+          const form = new FormData();
+          form.append("base64Image", dataUrl);
+          form.append("language", lang);
+          form.append("isOverlayRequired", "false");
+          form.append("OCREngine", String(engine));
+          form.append("scale", "true");
+          form.append("detectOrientation", "true");
+          form.append("filetype", "JPG");
+          const res = await fetch("https://api.ocr.space/parse/image", {
+            method: "POST",
+            headers: { apikey: apiKey },
+            body: form,
+          });
+          if (!res.ok) {
+            return {
+              IsErroredOnProcessing: true,
+              ErrorMessage: "http " + res.status,
+            };
+          }
+          return await res.json();
+        } catch (eForm) {
+          // Fallback: application/x-www-form-urlencoded
+          const body =
+            "base64Image=" +
+            encodeURIComponent(dataUrl) +
+            "&language=" +
+            encodeURIComponent(lang) +
+            "&isOverlayRequired=false&OCREngine=" +
+            encodeURIComponent(String(engine)) +
+            "&scale=true&filetype=JPG";
+          const res2 = await fetch("https://api.ocr.space/parse/image", {
+            method: "POST",
+            headers: {
+              apikey: apiKey,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: body,
+          });
+          if (!res2.ok) {
+            return {
+              IsErroredOnProcessing: true,
+              ErrorMessage:
+                "http " + res2.status + " / " + String(eForm && eForm.message),
+            };
+          }
+          return await res2.json();
+        }
       }
       try {
         let data = await callOcr(2);
-        if (data && data.IsErroredOnProcessing) {
-          console.warn("[SR] OCR engine2", data.ErrorMessage || data.ErrorDetails);
-          data = await callOcr(1);
+        let text = "";
+        if (data && !data.IsErroredOnProcessing) {
+          const parsed = (data.ParsedResults && data.ParsedResults[0]) || {};
+          text = (parsed.ParsedText || "").trim();
         }
-        if (!data || data.IsErroredOnProcessing) {
+        if (!text) {
+          data = await callOcr(1);
+          if (data && !data.IsErroredOnProcessing) {
+            const parsed = (data.ParsedResults && data.ParsedResults[0]) || {};
+            text = (parsed.ParsedText || "").trim();
+          }
+        }
+        if (data && data.IsErroredOnProcessing && !text) {
           const err =
             (data &&
               (Array.isArray(data.ErrorMessage)
@@ -318,10 +372,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: false, error: String(err) });
           return;
         }
-        const parsed = (data.ParsedResults && data.ParsedResults[0]) || {};
-        sendResponse({ ok: true, text: (parsed.ParsedText || "").trim() });
+        sendResponse({ ok: true, text: text || "" });
       } catch (e) {
-        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+        console.warn("[SR] OCR_SPACE", e);
+        sendResponse({
+          ok: false,
+          error: String(e && e.message ? e.message : e),
+        });
       }
     })();
     return true;

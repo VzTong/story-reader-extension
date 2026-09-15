@@ -21,6 +21,11 @@
 
 
 
+
+
+
+
+
   /* ===== Inline modules (tránh eval / CSP trang) ===== */
   if (!window.StoryTranslator) {
 /**
@@ -385,19 +390,8 @@
         await sleep(25);
       }
 
-      // OCR ảnh trong cùng nút Dịch trang (im lặng nếu fail / không có ảnh)
-      if (!abortFlag) {
-        try {
-          if (window.StoryImageTranslate) {
-            await window.StoryImageTranslate.translateInRoot(null, {
-              loose: true,
-              silent: true,
-            });
-          }
-        } catch (e) {
-          console.warn("[Translate] OCR skip", e);
-        }
-      }
+      // Không OCR trên truyện chữ — OCR chỉ khi isManga (nhánh trên).
+      // Tránh overlay OCR dính lên trang novel.
 
       showingOriginal = false;
       translateWanted = true;
@@ -502,27 +496,96 @@
   }
 
   /**
-   * Dịch các khối mới (chapter load thêm trên webnovel).
-   * Trả về Promise<number> — số đoạn đã dịch.
+   * Đang nghe TTS hoặc auto-scroll → dịch nền im lặng (không toast "Đang dịch").
    */
-  function translateNewBlocksOnly() {
-    if (!isTranslateWanted()) return Promise.resolve(0);
-    var blocks = collectBlocks();
-    var fresh = blocks.filter(function (el) {
-      return !originalMap.has(el);
-    });
-    if (!fresh.length) return Promise.resolve(0);
-    if (isBusy) {
-      // Chờ lượt đang chạy xong rồi thử lại
-      return new Promise(function (resolve) {
-        setTimeout(function () {
-          translateNewBlocksOnly().then(resolve);
-        }, 1200);
-      });
-    }
+  function isContinuousSession() {
+    try {
+      if (window.StoryTTS?.isSpeaking?.() || window.StoryTTS?.isPlaying?.()) return true;
+      if (window.StoryTTS?.autoScrollEnabled) return true;
+      if (window.StoryTTS?.isSessionActive?.()) return true;
+    } catch (e) {}
+    return false;
+  }
 
-    isBusy = true;
-    return (async function () {
+  function distToBottom() {
+    var h = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
+    var y = window.scrollY + window.innerHeight;
+    return Math.max(0, h - y);
+  }
+
+  /**
+   * Cuộn ngầm gần đáy để site infinite load thêm chapter (webnovel…).
+   * Đánh dấu programmatic để không pause auto-scroll.
+   */
+  function nudgeLoadMore() {
+    return new Promise(function (resolve) {
+      var before = document.documentElement.scrollHeight;
+      try {
+        window.__srTranslateNudge = true;
+        if (window.StoryTTS) {
+          try {
+            // tránh pauseAutoScroll coi là user
+            window.StoryTTS.isProgrammaticScroll && window.StoryTTS.isProgrammaticScroll();
+          } catch (e0) {}
+        }
+        // hích xuống — site infinite thường load khi gần đáy
+        window.scrollBy(0, Math.min(400, Math.max(120, distToBottom() + 80)));
+      } catch (e1) {}
+      var checks = 0;
+      var wait = function () {
+        checks++;
+        var now = document.documentElement.scrollHeight;
+        if (now > before + 60 || checks >= 8) {
+          setTimeout(function () {
+            window.__srTranslateNudge = false;
+          }, 300);
+          resolve(now > before + 60);
+          return;
+        }
+        setTimeout(wait, 200);
+      };
+      setTimeout(wait, 250);
+    });
+  }
+
+  /**
+   * Dịch các khối mới (chapter load thêm).
+   * @param {object} [opts]
+   * @param {boolean} [opts.silent] — ẩn toast (mặc định true nếu đang nghe/cuộn)
+   * @param {boolean} [opts.prefetch] — gần đáy thì nudge load trước
+   */
+  function translateNewBlocksOnly(opts) {
+    opts = opts || {};
+    if (!isTranslateWanted()) return Promise.resolve(0);
+
+    var silent =
+      opts.silent === true ||
+      (opts.silent !== false && isContinuousSession());
+
+    var run = async function () {
+      // Prefetch: gần đáy → cuộn ngầm load → rồi dịch
+      if (opts.prefetch !== false && distToBottom() < 1400) {
+        try {
+          await nudgeLoadMore();
+          await sleep(200);
+        } catch (eN) {}
+      }
+
+      var blocks = collectBlocks();
+      var fresh = blocks.filter(function (el) {
+        return !originalMap.has(el);
+      });
+      if (!fresh.length) return 0;
+
+      if (isBusy) {
+        return new Promise(function (resolve) {
+          setTimeout(function () {
+            translateNewBlocksOnly({ silent: silent, prefetch: false }).then(resolve);
+          }, 900);
+        });
+      }
+
+      isBusy = true;
       try {
         var targetLang = localStorage.getItem("sr-target-lang") || "vi";
         var sample = fresh
@@ -535,7 +598,11 @@
         if (source === targetLang) source = source === "vi" ? "en" : source;
         var langpair = source + "|" + targetLang;
         var ok = 0;
-        console.log("[Translate] auto +" + fresh.length + " khối mới");
+        console.log(
+          "[Translate] auto +" + fresh.length + " khối",
+          silent ? "(silent)" : ""
+        );
+        // Không toast "Đang dịch" khi continuous / silent
         for (var i = 0; i < fresh.length; i++) {
           var el = fresh[i];
           var text = (el.innerText || "").trim();
@@ -549,16 +616,19 @@
           } catch (e) {
             console.warn("[Translate] auto", e);
           }
-          await sleep(25);
+          await sleep(20);
         }
-        if (ok) {
-          window.StoryReaderUI?.toast?.("✓ Tự dịch +" + ok + " đoạn mới", 2500);
+        // Toast ngắn chỉ khi user tự cuộn (không continuous)
+        if (ok && !silent) {
+          window.StoryReaderUI?.toast?.("✓ Tự dịch +" + ok + " đoạn", 1800);
         }
         return ok;
       } finally {
         isBusy = false;
       }
-    })();
+    };
+
+    return run();
   }
 
   function stopAutoTranslateObserver() {
@@ -572,6 +642,9 @@
     try {
       clearInterval(window.__srTrPoll);
     } catch (e) {}
+    try {
+      clearInterval(window.__srTrPrefetch);
+    } catch (e2) {}
   }
 
   function startAutoTranslateObserver() {
@@ -579,8 +652,8 @@
     autoObs = new MutationObserver(function () {
       clearTimeout(observerTimer);
       observerTimer = setTimeout(function () {
-        translateNewBlocksOnly();
-      }, 600);
+        translateNewBlocksOnly({ silent: isContinuousSession(), prefetch: false });
+      }, 500);
     });
     try {
       autoObs.observe(document.body, { childList: true, subtree: true });
@@ -591,6 +664,7 @@
     try {
       lastCha = document.querySelectorAll(".cha-words, .cha-content").length;
     } catch (e0) {}
+
     clearInterval(window.__srTrPoll);
     window.__srTrPoll = setInterval(function () {
       if (!isTranslateWanted()) return;
@@ -602,9 +676,21 @@
       if (h > lastH + 80 || cha > lastCha) {
         lastH = h;
         lastCha = cha;
-        translateNewBlocksOnly();
+        translateNewBlocksOnly({ silent: isContinuousSession(), prefetch: false });
       }
-    }, 1200);
+    }, 1000);
+
+    // Prefetch định kỳ khi gần đáy + đang nghe/cuộn (hoặc user gần đáy)
+    clearInterval(window.__srTrPrefetch);
+    window.__srTrPrefetch = setInterval(function () {
+      if (!isTranslateWanted() || isBusy) return;
+      var near = distToBottom() < 1600;
+      if (!near) return;
+      // Continuous: luôn prefetch; user thường: chỉ khi rất gần đáy
+      if (isContinuousSession() || distToBottom() < 1000) {
+        translateNewBlocksOnly({ silent: true, prefetch: true });
+      }
+    }, 1800);
 
     if (!window.__srTrScrollBound) {
       window.__srTrScrollBound = true;
@@ -612,15 +698,17 @@
         "scroll",
         function () {
           if (!isTranslateWanted()) return;
+          // Nudge translate không kích hoạt lại (tránh vòng)
+          if (window.__srTranslateNudge) return;
           clearTimeout(window.__srTrScrollT);
           window.__srTrScrollT = setTimeout(function () {
-            if (
-              window.scrollY + window.innerHeight >
-              document.documentElement.scrollHeight - 900
-            ) {
-              translateNewBlocksOnly();
+            if (distToBottom() < 1200) {
+              translateNewBlocksOnly({
+                silent: isContinuousSession(),
+                prefetch: true,
+              });
             }
-          }, 500);
+          }, 350);
         },
         { passive: true }
       );
@@ -659,18 +747,21 @@
   }
   if (!window.StoryImageTranslate) {
 /**
- * OCR chữ trong ảnh truyện tranh (capture viewport).
+ * OCR + dịch chữ trong ảnh truyện tranh (Phase 1: CV bubble).
  *
- * Luồng:
- * 1) Ẩn UI extension (tránh OCR dính toast/menu)
- * 2) chrome.tabs.captureVisibleTab
- * 3) Nén JPEG ≤1200px (OCR.space free giới hạn size)
- * 4) OCR.space base64 → dịch → overlay
+ * Chỉ dùng trên manga. Không gọi từ luồng dịch text novel.
+ *
+ * 1) captureVisibleTab (tránh CORS CDN)
+ * 2) CV threshold → bbox bubble
+ * 3) OCR.space (chỉ eng — free key không nhận "vie")
+ * 4) Dịch → overlay
+ * Giới hạn request + dừng khi 429.
  */
 (function () {
   "use strict";
 
   var overlays = [];
+  var ocrBackoffUntil = 0;
 
   function clearOverlays() {
     overlays.forEach(function (el) {
@@ -679,6 +770,263 @@
       } catch (e) {}
     });
     overlays = [];
+  }
+
+  function setExtUiVisible(vis) {
+    ["sr-bubble", "sr-menu", "sr-tts-panel", "sr-scroll-hud", "sr-toast"].forEach(
+      function (id) {
+        var el = document.getElementById(id);
+        if (el) el.style.visibility = vis ? "" : "hidden";
+      }
+    );
+  }
+
+  function runtimeOk() {
+    return !!(chrome && chrome.runtime && chrome.runtime.id);
+  }
+
+  function isMangaHost() {
+    var host = (location.hostname || "").toLowerCase();
+    return /kagane|nettruyen|truyenqq|truyentranh|mangadex|webtoon|asura|newtruyen|comick|manhwa|manhua/.test(
+      host
+    );
+  }
+
+  function captureTab() {
+    return new Promise(function (resolve, reject) {
+      if (!runtimeOk()) return reject(new Error("context invalidated"));
+      chrome.runtime.sendMessage({ type: "CAPTURE_TAB" }, function (resp) {
+        if (chrome.runtime.lastError)
+          return reject(new Error(chrome.runtime.lastError.message));
+        if (resp && resp.ok && resp.dataUrl) resolve(resp.dataUrl);
+        else reject(new Error((resp && resp.error) || "capture fail"));
+      });
+    });
+  }
+
+  function dataUrlToCanvas(dataUrl) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () {
+        var c = document.createElement("canvas");
+        c.width = img.naturalWidth || img.width;
+        c.height = img.naturalHeight || img.height;
+        c.getContext("2d").drawImage(img, 0, 0);
+        resolve(c);
+      };
+      img.onerror = function () {
+        reject(new Error("decode fail"));
+      };
+      img.src = dataUrl;
+    });
+  }
+
+  function detectBubbles(canvas) {
+    var maxW = 900;
+    var scale = Math.min(1, maxW / canvas.width);
+    var sw = Math.max(1, Math.round(canvas.width * scale));
+    var sh = Math.max(1, Math.round(canvas.height * scale));
+    var small = document.createElement("canvas");
+    small.width = sw;
+    small.height = sh;
+    var sctx = small.getContext("2d");
+    sctx.drawImage(canvas, 0, 0, sw, sh);
+    var img = sctx.getImageData(0, 0, sw, sh);
+    var d = img.data;
+    var n = sw * sh;
+    var mask = new Uint8Array(n);
+    for (var i = 0; i < n; i++) {
+      var o = i * 4;
+      var g = (d[o] * 0.299 + d[o + 1] * 0.587 + d[o + 2] * 0.114) | 0;
+      mask[i] = g >= 200 ? 1 : 0;
+    }
+    var mask2 = new Uint8Array(n);
+    for (var y = 1; y < sh - 1; y++) {
+      for (var x = 1; x < sw - 1; x++) {
+        var p = y * sw + x;
+        if (mask[p] && mask[p - 1] && mask[p + 1] && mask[p - sw] && mask[p + sw])
+          mask2[p] = 1;
+      }
+    }
+    mask = mask2;
+
+    var visited = new Uint8Array(n);
+    var boxes = [];
+    var minArea = Math.max(500, (sw * sh) / 100);
+    var maxArea = sw * sh * 0.4;
+
+    for (var i = 0; i < n; i++) {
+      if (!mask[i] || visited[i]) continue;
+      var qx = [i % sw];
+      var qy = [(i / sw) | 0];
+      visited[i] = 1;
+      var qi = 0;
+      var minX = qx[0],
+        maxX = qx[0],
+        minY = qy[0],
+        maxY = qy[0];
+      var area = 0;
+      while (qi < qx.length) {
+        var cx = qx[qi];
+        var cy = qy[qi];
+        qi++;
+        area++;
+        if (cx < minX) minX = cx;
+        if (cx > maxX) maxX = cx;
+        if (cy < minY) minY = cy;
+        if (cy > maxY) maxY = cy;
+        var neigh = [
+          [cx - 1, cy],
+          [cx + 1, cy],
+          [cx, cy - 1],
+          [cx, cy + 1],
+        ];
+        for (var k = 0; k < 4; k++) {
+          var nx = neigh[k][0];
+          var ny = neigh[k][1];
+          if (nx < 0 || ny < 0 || nx >= sw || ny >= sh) continue;
+          var ni = ny * sw + nx;
+          if (!mask[ni] || visited[ni]) continue;
+          visited[ni] = 1;
+          qx.push(nx);
+          qy.push(ny);
+        }
+      }
+      if (area < minArea || area > maxArea) continue;
+      var bw = maxX - minX + 1;
+      var bh = maxY - minY + 1;
+      if (bw < 24 || bh < 18) continue;
+      var aspect = bw / bh;
+      if (aspect > 7 || aspect < 0.18) continue;
+      if (area / (bw * bh) < 0.28) continue;
+      var inv = 1 / scale;
+      var pad = 4 * inv;
+      var bx = Math.max(0, minX * inv - pad);
+      var by = Math.max(0, minY * inv - pad);
+      var bx2 = Math.min(canvas.width, (maxX + 1) * inv + pad);
+      var by2 = Math.min(canvas.height, (maxY + 1) * inv + pad);
+      boxes.push({
+        x: bx | 0,
+        y: by | 0,
+        w: (bx2 - bx) | 0,
+        h: (by2 - by) | 0,
+      });
+    }
+    boxes.sort(function (a, b) {
+      return a.y - b.y || a.x - b.x;
+    });
+    // merge overlap
+    var merged = [];
+    boxes.forEach(function (b) {
+      var hit = null;
+      for (var j = 0; j < merged.length; j++) {
+        var m = merged[j];
+        var ox = Math.max(
+          0,
+          Math.min(b.x + b.w, m.x + m.w) - Math.max(b.x, m.x)
+        );
+        var oy = Math.max(
+          0,
+          Math.min(b.y + b.h, m.y + m.h) - Math.max(b.y, m.y)
+        );
+        if (ox * oy > 0.4 * Math.min(b.w * b.h, m.w * m.h)) {
+          hit = m;
+          break;
+        }
+      }
+      if (hit) {
+        var x1 = Math.min(hit.x, b.x);
+        var y1 = Math.min(hit.y, b.y);
+        var x2 = Math.max(hit.x + hit.w, b.x + b.w);
+        var y2 = Math.max(hit.y + hit.h, b.y + b.h);
+        hit.x = x1;
+        hit.y = y1;
+        hit.w = x2 - x1;
+        hit.h = y2 - y1;
+      } else merged.push(b);
+    });
+    if (merged.length > 6) merged = merged.slice(0, 6);
+    console.log(
+      "[OCR-CV] bubbles",
+      merged.length,
+      "on",
+      canvas.width + "x" + canvas.height
+    );
+    return merged;
+  }
+
+  function cropToDataUrl(canvas, box) {
+    var w = Math.max(1, box.w);
+    var h = Math.max(1, box.h);
+    var scale = w < 180 ? 2 : w < 360 ? 1.3 : w > 600 ? 600 / w : 1;
+    var c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(w * scale));
+    c.height = Math.max(1, Math.round(h * scale));
+    var ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(canvas, box.x, box.y, w, h, 0, 0, c.width, c.height);
+    var q = 0.82;
+    var out = c.toDataURL("image/jpeg", q);
+    while (out.length > 400000 && q > 0.5) {
+      q -= 0.1;
+      out = c.toDataURL("image/jpeg", q);
+    }
+    return out;
+  }
+
+  function ocrSpaceData(dataUrl) {
+    return new Promise(function (resolve, reject) {
+      if (!runtimeOk()) return reject(new Error("context invalidated"));
+      if (Date.now() < ocrBackoffUntil) {
+        return reject(new Error("OCR rate-limit — đợi " + Math.ceil((ocrBackoffUntil - Date.now()) / 1000) + "s"));
+      }
+      var apiKey = "";
+      try {
+        apiKey = localStorage.getItem("sr-ocr-key") || "";
+      } catch (e) {}
+      // Chỉ eng — free OCR.space từ chối "vie" (E201)
+      chrome.runtime.sendMessage(
+        {
+          type: "OCR_SPACE",
+          dataUrl: dataUrl,
+          lang: "eng",
+          apiKey: apiKey,
+        },
+        function (resp) {
+          if (chrome.runtime.lastError)
+            return reject(new Error(chrome.runtime.lastError.message));
+          if (resp && resp.ok) resolve(resp.text || "");
+          else {
+            var err = (resp && resp.error) || "ocr fail";
+            if (String(err).indexOf("429") !== -1 || String(err).indexOf("503") !== -1) {
+              ocrBackoffUntil = Date.now() + 60000;
+            }
+            reject(new Error(err));
+          }
+        }
+      );
+    });
+  }
+
+  function translateText(text) {
+    var tl = localStorage.getItem("sr-target-lang") || "vi";
+    return new Promise(function (resolve) {
+      if (!text || text.trim().length < 1) return resolve("");
+      if (!runtimeOk()) return resolve(text);
+      chrome.runtime.sendMessage(
+        {
+          type: "MYMEMORY_TRANSLATE",
+          text: text.slice(0, 900),
+          langpair: "auto|" + tl,
+        },
+        function (resp) {
+          if (chrome.runtime.lastError) return resolve(text);
+          if (resp && resp.ok) resolve(resp.translatedText || text);
+          else resolve(text);
+        }
+      );
+    });
   }
 
   function placeOverlayViewport(text) {
@@ -691,162 +1039,116 @@
       "background:rgba(13,17,23,0.94);color:#e6edf3;padding:12px 14px;" +
       "font:14px/1.5 system-ui,sans-serif;border-radius:12px;" +
       "border:1px solid rgba(0,229,255,0.5);box-sizing:border-box;" +
-      "white-space:pre-wrap;box-shadow:0 8px 32px rgba(0,0,0,0.45);";
+      "white-space:pre-wrap;";
     document.body.appendChild(box);
     overlays.push(box);
   }
 
-  function setExtUiVisible(vis) {
-    ["sr-bubble", "sr-menu", "sr-tts-panel", "sr-scroll-hud", "sr-toast"].forEach(
-      function (id) {
-        var el = document.getElementById(id);
-        if (el) el.style.visibility = vis ? "" : "hidden";
-      }
-    );
-    document.querySelectorAll(".sr-img-ocr-overlay").forEach(function (el) {
-      el.style.visibility = vis ? "" : "hidden";
+  function sleep(ms) {
+    return new Promise(function (r) {
+      setTimeout(r, ms);
     });
   }
 
-  function captureTab() {
-    return new Promise(function (resolve, reject) {
-      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
-        reject(new Error("Extension context invalidated — F5 sau Reload"));
-        return;
-      }
-      chrome.runtime.sendMessage({ type: "CAPTURE_TAB" }, function (resp) {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        if (resp && resp.ok && resp.dataUrl) resolve(resp.dataUrl);
-        else
-          reject(
-            new Error((resp && resp.error) || "captureVisibleTab thất bại")
-          );
-      });
-    });
-  }
-
-  /** Nén + thu nhỏ để OCR.space free nhận được */
-  function shrinkDataUrl(dataUrl, maxW, quality) {
-    maxW = maxW || 1100;
-    quality = quality || 0.72;
-    return new Promise(function (resolve, reject) {
-      var img = new Image();
-      img.onload = function () {
-        try {
-          var scale = Math.min(1, maxW / img.width);
-          var w = Math.max(1, Math.round(img.width * scale));
-          var h = Math.max(1, Math.round(img.height * scale));
-          var c = document.createElement("canvas");
-          c.width = w;
-          c.height = h;
-          var ctx = c.getContext("2d");
-          ctx.fillStyle = "#fff";
-          ctx.fillRect(0, 0, w, h);
-          ctx.drawImage(img, 0, 0, w, h);
-          resolve(c.toDataURL("image/jpeg", quality));
-        } catch (e) {
-          reject(e);
-        }
-      };
-      img.onerror = function () {
-        reject(new Error("Không decode được ảnh chụp"));
-      };
-      img.src = dataUrl;
-    });
-  }
-
-  function ocrSpaceData(dataUrl, lang) {
-    return new Promise(function (resolve, reject) {
-      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
-        reject(new Error("Extension context invalidated"));
-        return;
-      }
-      chrome.runtime.sendMessage(
-        { type: "OCR_SPACE", dataUrl: dataUrl, lang: lang || "eng" },
-        function (resp) {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          if (resp && resp.ok) resolve(resp.text || "");
-          else reject(new Error((resp && resp.error) || "ocr fail"));
-        }
-      );
-    });
-  }
-
-  function translateText(text) {
-    var tl = localStorage.getItem("sr-target-lang") || "vi";
-    return new Promise(function (resolve) {
-      if (!text || text.trim().length < 1) {
-        resolve("");
-        return;
-      }
-      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
-        resolve(text);
-        return;
-      }
-      chrome.runtime.sendMessage(
-        {
-          type: "MYMEMORY_TRANSLATE",
-          text: text.slice(0, 900),
-          langpair: "auto|" + tl,
-        },
-        function (resp) {
-          if (chrome.runtime.lastError) {
-            resolve(text);
-            return;
-          }
-          if (resp && resp.ok) resolve(resp.translatedText || text);
-          else resolve(text);
-        }
-      );
-    });
-  }
-
+  /**
+   * @param root ignored
+   * @param opts.silent — không toast (vẫn không chạy trên non-manga)
+   * @param opts.force — bỏ qua check host (hiếm)
+   */
   async function translateInRoot(root, opts) {
     opts = opts || {};
     clearOverlays();
+
+    // Chặn OCR trên truyện chữ / silent gọi nhầm
+    if (!opts.force && !isMangaHost()) {
+      var bigImgs = 0;
+      try {
+        document.querySelectorAll("img").forEach(function (img) {
+          if (img.closest && img.closest("[id^='sr-']")) return;
+          var w = Math.max(img.naturalWidth || 0, img.clientWidth || 0);
+          var h = Math.max(img.naturalHeight || 0, img.clientHeight || 0);
+          if (w >= 250 && h >= 250) bigImgs++;
+        });
+      } catch (e0) {}
+      if (bigImgs < 3) {
+        if (!opts.silent) {
+          window.StoryReaderUI?.toast?.(
+            "Không phải trang truyện tranh — bỏ OCR",
+            2500
+          );
+        }
+        return 0;
+      }
+    }
+
     if (!opts.silent) {
-      window.StoryReaderUI?.toast?.("Đang chụp + OCR vùng đang xem…", 25000);
+      window.StoryReaderUI?.toast?.("OCR vùng đang xem (CV)…", 25000);
     }
 
     var lastErr = "";
+    var total = 0;
     try {
       setExtUiVisible(false);
-      await new Promise(function (r) {
-        setTimeout(r, 120);
-      });
-
+      await sleep(150);
       var shot = await captureTab();
-      var small = await shrinkDataUrl(shot, 1100, 0.7);
-      var raw = await ocrSpaceData(small, "eng");
-      raw = (raw || "").replace(/\r/g, "").trim();
-
       setExtUiVisible(true);
 
-      if (raw.length > 2) {
-        var out = await translateText(raw);
-        placeOverlayViewport(out || raw);
-        if (!opts.silent) {
-          window.StoryReaderUI?.toast?.("✓ Đã OCR dịch vùng đang xem", 4000);
-        }
-        return 1;
+      var canvas = await dataUrlToCanvas(shot);
+      var boxes = detectBubbles(canvas);
+      if (!boxes.length) {
+        // vùng giữa màn (1 crop lớn) — chỉ khi manga
+        boxes = [
+          {
+            x: (canvas.width * 0.08) | 0,
+            y: (canvas.height * 0.1) | 0,
+            w: (canvas.width * 0.84) | 0,
+            h: (canvas.height * 0.7) | 0,
+          },
+        ];
       }
-      lastErr = "OCR không thấy chữ (ảnh mờ / không có text)";
+
+      var texts = [];
+      var maxCrops = Math.min(boxes.length, 4);
+      for (var i = 0; i < maxCrops; i++) {
+        if (Date.now() < ocrBackoffUntil) {
+          lastErr = "OCR rate-limit (429) — thử lại sau 1 phút hoặc set sr-ocr-key";
+          break;
+        }
+        try {
+          var dataUrl = cropToDataUrl(canvas, boxes[i]);
+          var raw = (await ocrSpaceData(dataUrl)).replace(/\r/g, "").trim();
+          if (raw.length > 2) {
+            texts.push(await translateText(raw));
+            total++;
+          }
+          await sleep(400); // giảm 429
+        } catch (eOne) {
+          lastErr = String(eOne.message || eOne);
+          console.warn("[OCR-CV] crop", lastErr);
+          if (lastErr.indexOf("429") !== -1 || lastErr.indexOf("503") !== -1) break;
+        }
+      }
+
+      if (texts.length) {
+        placeOverlayViewport(texts.join("\n\n——\n\n"));
+      }
     } catch (e) {
       setExtUiVisible(true);
       lastErr = String(e && e.message ? e.message : e);
-      console.warn("[OCR]", lastErr);
+      console.warn("[OCR-CV]", lastErr);
     }
 
     if (!opts.silent) {
-      window.StoryReaderUI?.toast?.("OCR lỗi: " + lastErr.slice(0, 120), 6000);
+      if (total > 0) {
+        window.StoryReaderUI?.toast?.("✓ OCR dịch " + total + " vùng", 4000);
+      } else {
+        window.StoryReaderUI?.toast?.(
+          "OCR: " + (lastErr || "không đọc được chữ").slice(0, 120),
+          5000
+        );
+      }
     }
-    return 0;
+    return total;
   }
 
   window.StoryImageTranslate = {
@@ -856,7 +1158,7 @@
     translateInRoot: translateInRoot,
     clearOverlays: clearOverlays,
   };
-  console.log("[Story Reader] image-translate.js loaded (capture+shrink OCR)");
+  console.log("[Story Reader] image-translate.js loaded (capture-only CV OCR)");
 })();
 
   }
@@ -2285,6 +2587,7 @@
       var engineOn = !!window.StoryTTS?.autoScrollEnabled;
       if (!autoScrollEnabled && !engineOn) return;
       // Chỉ event "scroll" mới cần lọc programmatic
+      if (window.__srTranslateNudge) return;
       if (fromScrollEvent && window.StoryTTS?.isProgrammaticScroll?.()) return;
       window.StoryTTS?.pauseAutoScroll?.(3);
       clearTimeout(userScrollTimer);

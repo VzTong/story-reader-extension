@@ -360,19 +360,8 @@
         await sleep(25);
       }
 
-      // OCR ảnh trong cùng nút Dịch trang (im lặng nếu fail / không có ảnh)
-      if (!abortFlag) {
-        try {
-          if (window.StoryImageTranslate) {
-            await window.StoryImageTranslate.translateInRoot(null, {
-              loose: true,
-              silent: true,
-            });
-          }
-        } catch (e) {
-          console.warn("[Translate] OCR skip", e);
-        }
-      }
+      // Không OCR trên truyện chữ — OCR chỉ khi isManga (nhánh trên).
+      // Tránh overlay OCR dính lên trang novel.
 
       showingOriginal = false;
       translateWanted = true;
