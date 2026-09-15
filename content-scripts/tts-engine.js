@@ -46,6 +46,8 @@
   let scrollSpeed = parseFloat(localStorage.getItem("sr-scroll-speed") || "1") || 1;
   let contextLevel = parseInt(localStorage.getItem("sr-context") || "2", 10);
   let pageLang = "vi";
+  /** true = đang session TTS: không nhảy theo vị trí cuộn khi restart/extend */
+  let ttsIndexLocked = false;
   let autoScrollTimer = null;
 
   /* ---------- helpers ---------- */
@@ -1012,6 +1014,10 @@
     currentIndex = Math.max(0, Math.min(startIndex, sentences.length - 1));
     isPaused = false;
     isSpeaking = true;
+    ttsIndexLocked = true;
+    try {
+      sessionStorage.setItem("sr-tts-lock-index", "1");
+    } catch (eLock) {}
 
     pageLang = detectPageLanguage(sentences.slice(0, 5).join(" "));
 
@@ -1135,8 +1141,7 @@
           sessionStorage.getItem("sr-translate-wanted") === "1" &&
           window.StoryTranslator?.translateNewBlocksOnly
         ) {
-          window.StoryReaderUI?.toast?.("Đang dịch đoạn mới…", 6000);
-          await window.StoryTranslator.translateNewBlocksOnly();
+          await window.StoryTranslator.translateNewBlocksOnly({ silent: true, prefetch: true });
           await new Promise(function (r) {
             setTimeout(r, 300);
           });
@@ -1269,10 +1274,7 @@
       // Nếu user đang bật dịch trang → dịch content mới trước khi đọc
       try {
         if (window.StoryTranslator && window.StoryTranslator.isTranslateWanted?.()) {
-          window.StoryReaderUI?.toast?.("Dịch chương mới…");
-          await window.StoryTranslator.translatePage(
-            localStorage.getItem("sr-target-lang") || "vi"
-          );
+          await window.StoryTranslator.translateNewBlocksOnly({ silent: true, prefetch: true });
           // Lấy lại text sau dịch
           var after = window.StoryDetector.detectContent();
           if (after && after.text && after.text.length > 40) {
@@ -1318,21 +1320,60 @@
       } catch (err) {}
       var startIdx = 0;
       var fromTop = false;
+      var lockIdx = false;
       try {
         fromTop = sessionStorage.getItem("sr-start-from-top") === "1";
         sessionStorage.removeItem("sr-start-from-top");
+        lockIdx =
+          ttsIndexLocked ||
+          sessionStorage.getItem("sr-tts-lock-index") === "1";
       } catch (eTop) {}
       if (fromTop) {
         // Sau next chương: luôn từ đầu
         startIdx = 0;
+        ttsIndexLocked = false;
+        try {
+          sessionStorage.removeItem("sr-tts-lock-index");
+        } catch (e0) {}
         try {
           window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
         } catch (eScr) {
           window.scrollTo(0, 0);
         }
+      } else if (lockIdx && currentUtterances && currentUtterances.length) {
+        // Đang session TTS: bám câu đang đọc, KHÔNG theo vị trí cuộn
+        var prevIdx = Math.max(0, currentIndex);
+        var anchor =
+          currentUtterances[Math.min(prevIdx, currentUtterances.length - 1)] ||
+          currentUtterances[currentUtterances.length - 1] ||
+          "";
+        startIdx = prevIdx;
+        if (anchor) {
+          var key = anchor.slice(0, 36).trim();
+          for (var si = 0; si < sentences.length; si++) {
+            if (
+              sentences[si] === anchor ||
+              (key.length > 8 && sentences[si].indexOf(key) !== -1) ||
+              (key.length > 8 && anchor.indexOf(sentences[si].slice(0, 28)) !== -1)
+            ) {
+              // Tiếp từ câu kế (đã đọc xong anchor) hoặc đúng anchor nếu pause
+              startIdx = isPaused ? si : Math.min(si + 1, sentences.length - 1);
+              if (isPaused) startIdx = si;
+              break;
+            }
+          }
+        }
+        // List dài hơn (infinite): nối tiếp sau độ dài cũ nếu anchor không khớp
+        if (
+          startIdx === prevIdx &&
+          sentences.length > currentUtterances.length + 2 &&
+          prevIdx >= currentUtterances.length - 1
+        ) {
+          startIdx = Math.min(currentUtterances.length, sentences.length - 1);
+        }
+        console.log("[TTS] lock-index → start@" + startIdx);
       } else {
         startIdx = findIndexNearViewport(sentences);
-        // Webnovel infinite: đang giữa trang dài
         if (isInfiniteScrollHost() && startIdx === 0 && window.scrollY > 400) {
           var ratio =
             window.scrollY /
@@ -1395,6 +1436,10 @@
     bumpSpeakGeneration(); // hủy speakNext / google callback còn treo
     isPaused = false;
     isSpeaking = false;
+    ttsIndexLocked = false;
+    try {
+      sessionStorage.removeItem("sr-tts-lock-index");
+    } catch (eUl) {}
     currentIndex = 0; // progress hiển thị 0 / N
     stopGoogleAudio();
     try {
@@ -1939,9 +1984,79 @@
   }
 
   /* ---------- API ---------- */
+
+  /**
+   * Sau khi auto-dịch thêm đoạn: nối câu mới vào hàng đợi, giữ currentIndex.
+   * Không restart theo viewport.
+   */
+  async function extendQueueFromPage() {
+    if (!window.StoryDetector) return 0;
+    if (!ttsIndexLocked && !isSpeaking && !isPaused) return 0;
+    try {
+      var result = window.StoryDetector.detectContent();
+      if (!result || !result.text || result.text.length < 40) return 0;
+      var sentences = splitIntoSentences(result.text);
+      if (!sentences.length) return 0;
+      var prev = currentUtterances || [];
+      var prevLen = prev.length;
+      if (sentences.length <= prevLen) return 0;
+
+      // Tìm overlap: câu cuối hàng đợi cũ trong list mới
+      var startAppend = prevLen;
+      var anchor = prevLen ? prev[prevLen - 1] : "";
+      if (anchor) {
+        var key = anchor.slice(0, 40).trim();
+        for (var i = 0; i < sentences.length; i++) {
+          if (
+            sentences[i] === anchor ||
+            (key.length > 10 && sentences[i].indexOf(key) !== -1)
+          ) {
+            startAppend = i + 1;
+            break;
+          }
+        }
+      }
+      if (startAppend >= sentences.length) return 0;
+
+      var added = sentences.slice(startAppend);
+      if (!added.length) return 0;
+
+      currentUtterances = prev.concat(added);
+      ttsIndexLocked = true;
+      try {
+        sessionStorage.setItem("sr-tts-lock-index", "1");
+      } catch (e1) {}
+      try {
+        wrapSentencesInPage(currentUtterances, Math.max(0, currentIndex));
+      } catch (e2) {}
+      console.log(
+        "[TTS] extend +" +
+          added.length +
+          " câu | queue=" +
+          currentUtterances.length +
+          " | idx=" +
+          currentIndex
+      );
+      // Đang dừng vì hết queue → đọc tiếp
+      if (
+        isSpeaking &&
+        !isPaused &&
+        currentIndex >= prevLen
+      ) {
+        speakNext();
+      }
+      window.StoryReaderUI?.updateProgress?.();
+      return added.length;
+    } catch (e) {
+      console.warn("[TTS] extendQueueFromPage", e);
+      return 0;
+    }
+  }
+
   window.StoryTTS = {
     speakQueue: speakQueue,
     startFromPage: startFromPage,
+    extendQueueFromPage: extendQueueFromPage,
     isSpeaking: function () { return !!isSpeaking && !isPaused; },
     splitIntoSentences: splitIntoSentences,
     pause: pause,

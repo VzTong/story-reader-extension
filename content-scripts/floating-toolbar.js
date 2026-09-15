@@ -26,6 +26,7 @@
 
 
 
+
   /* ===== Inline modules (tránh eval / CSP trang) ===== */
   if (!window.StoryTranslator) {
 /**
@@ -420,9 +421,13 @@
             document.getElementById("sr-panel-play")?.classList.contains("sr-playing"));
         if (wasOn || window.__srWasSpeakingBeforeTranslate) {
           window.__srWasSpeakingBeforeTranslate = false;
-          window.StoryTTS?.stop?.();
+          // Giữ lock-index: đọc tiếp đúng chỗ, không theo viewport
+          try {
+            sessionStorage.setItem("sr-tts-lock-index", "1");
+          } catch (eL) {}
           setTimeout(function () {
-            window.StoryTTS?.startFromPage?.();
+            window.StoryTTS?.extendQueueFromPage?.() ||
+              window.StoryTTS?.startFromPage?.();
           }, 400);
         }
       } catch (eR) {}
@@ -621,6 +626,21 @@
         // Toast ngắn chỉ khi user tự cuộn (không continuous)
         if (ok && !silent) {
           window.StoryReaderUI?.toast?.("✓ Tự dịch +" + ok + " đoạn", 1800);
+        }
+        // Đang nghe: nối hàng đợi TTS tại câu hiện tại (không nhảy theo cuộn)
+        if (ok) {
+          try {
+            if (
+              window.StoryTTS &&
+              (window.StoryTTS.isSpeaking?.() ||
+                window.StoryTTS.isSessionActive?.() ||
+                window.StoryTTS.isPlaying?.())
+            ) {
+              await window.StoryTTS.extendQueueFromPage?.();
+            }
+          } catch (eExt) {
+            console.warn("[Translate] extend TTS", eExt);
+          }
         }
         return ok;
       } finally {

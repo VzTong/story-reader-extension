@@ -390,9 +390,13 @@
             document.getElementById("sr-panel-play")?.classList.contains("sr-playing"));
         if (wasOn || window.__srWasSpeakingBeforeTranslate) {
           window.__srWasSpeakingBeforeTranslate = false;
-          window.StoryTTS?.stop?.();
+          // Giữ lock-index: đọc tiếp đúng chỗ, không theo viewport
+          try {
+            sessionStorage.setItem("sr-tts-lock-index", "1");
+          } catch (eL) {}
           setTimeout(function () {
-            window.StoryTTS?.startFromPage?.();
+            window.StoryTTS?.extendQueueFromPage?.() ||
+              window.StoryTTS?.startFromPage?.();
           }, 400);
         }
       } catch (eR) {}
@@ -466,27 +470,96 @@
   }
 
   /**
-   * Dịch các khối mới (chapter load thêm trên webnovel).
-   * Trả về Promise<number> — số đoạn đã dịch.
+   * Đang nghe TTS hoặc auto-scroll → dịch nền im lặng (không toast "Đang dịch").
    */
-  function translateNewBlocksOnly() {
-    if (!isTranslateWanted()) return Promise.resolve(0);
-    var blocks = collectBlocks();
-    var fresh = blocks.filter(function (el) {
-      return !originalMap.has(el);
-    });
-    if (!fresh.length) return Promise.resolve(0);
-    if (isBusy) {
-      // Chờ lượt đang chạy xong rồi thử lại
-      return new Promise(function (resolve) {
-        setTimeout(function () {
-          translateNewBlocksOnly().then(resolve);
-        }, 1200);
-      });
-    }
+  function isContinuousSession() {
+    try {
+      if (window.StoryTTS?.isSpeaking?.() || window.StoryTTS?.isPlaying?.()) return true;
+      if (window.StoryTTS?.autoScrollEnabled) return true;
+      if (window.StoryTTS?.isSessionActive?.()) return true;
+    } catch (e) {}
+    return false;
+  }
 
-    isBusy = true;
-    return (async function () {
+  function distToBottom() {
+    var h = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
+    var y = window.scrollY + window.innerHeight;
+    return Math.max(0, h - y);
+  }
+
+  /**
+   * Cuộn ngầm gần đáy để site infinite load thêm chapter (webnovel…).
+   * Đánh dấu programmatic để không pause auto-scroll.
+   */
+  function nudgeLoadMore() {
+    return new Promise(function (resolve) {
+      var before = document.documentElement.scrollHeight;
+      try {
+        window.__srTranslateNudge = true;
+        if (window.StoryTTS) {
+          try {
+            // tránh pauseAutoScroll coi là user
+            window.StoryTTS.isProgrammaticScroll && window.StoryTTS.isProgrammaticScroll();
+          } catch (e0) {}
+        }
+        // hích xuống — site infinite thường load khi gần đáy
+        window.scrollBy(0, Math.min(400, Math.max(120, distToBottom() + 80)));
+      } catch (e1) {}
+      var checks = 0;
+      var wait = function () {
+        checks++;
+        var now = document.documentElement.scrollHeight;
+        if (now > before + 60 || checks >= 8) {
+          setTimeout(function () {
+            window.__srTranslateNudge = false;
+          }, 300);
+          resolve(now > before + 60);
+          return;
+        }
+        setTimeout(wait, 200);
+      };
+      setTimeout(wait, 250);
+    });
+  }
+
+  /**
+   * Dịch các khối mới (chapter load thêm).
+   * @param {object} [opts]
+   * @param {boolean} [opts.silent] — ẩn toast (mặc định true nếu đang nghe/cuộn)
+   * @param {boolean} [opts.prefetch] — gần đáy thì nudge load trước
+   */
+  function translateNewBlocksOnly(opts) {
+    opts = opts || {};
+    if (!isTranslateWanted()) return Promise.resolve(0);
+
+    var silent =
+      opts.silent === true ||
+      (opts.silent !== false && isContinuousSession());
+
+    var run = async function () {
+      // Prefetch: gần đáy → cuộn ngầm load → rồi dịch
+      if (opts.prefetch !== false && distToBottom() < 1400) {
+        try {
+          await nudgeLoadMore();
+          await sleep(200);
+        } catch (eN) {}
+      }
+
+      var blocks = collectBlocks();
+      var fresh = blocks.filter(function (el) {
+        return !originalMap.has(el);
+      });
+      if (!fresh.length) return 0;
+
+      if (isBusy) {
+        return new Promise(function (resolve) {
+          setTimeout(function () {
+            translateNewBlocksOnly({ silent: silent, prefetch: false }).then(resolve);
+          }, 900);
+        });
+      }
+
+      isBusy = true;
       try {
         var targetLang = localStorage.getItem("sr-target-lang") || "vi";
         var sample = fresh
@@ -499,7 +572,11 @@
         if (source === targetLang) source = source === "vi" ? "en" : source;
         var langpair = source + "|" + targetLang;
         var ok = 0;
-        console.log("[Translate] auto +" + fresh.length + " khối mới");
+        console.log(
+          "[Translate] auto +" + fresh.length + " khối",
+          silent ? "(silent)" : ""
+        );
+        // Không toast "Đang dịch" khi continuous / silent
         for (var i = 0; i < fresh.length; i++) {
           var el = fresh[i];
           var text = (el.innerText || "").trim();
@@ -513,16 +590,34 @@
           } catch (e) {
             console.warn("[Translate] auto", e);
           }
-          await sleep(25);
+          await sleep(20);
         }
+        // Toast ngắn chỉ khi user tự cuộn (không continuous)
+        if (ok && !silent) {
+          window.StoryReaderUI?.toast?.("✓ Tự dịch +" + ok + " đoạn", 1800);
+        }
+        // Đang nghe: nối hàng đợi TTS tại câu hiện tại (không nhảy theo cuộn)
         if (ok) {
-          window.StoryReaderUI?.toast?.("✓ Tự dịch +" + ok + " đoạn mới", 2500);
+          try {
+            if (
+              window.StoryTTS &&
+              (window.StoryTTS.isSpeaking?.() ||
+                window.StoryTTS.isSessionActive?.() ||
+                window.StoryTTS.isPlaying?.())
+            ) {
+              await window.StoryTTS.extendQueueFromPage?.();
+            }
+          } catch (eExt) {
+            console.warn("[Translate] extend TTS", eExt);
+          }
         }
         return ok;
       } finally {
         isBusy = false;
       }
-    })();
+    };
+
+    return run();
   }
 
   function stopAutoTranslateObserver() {
@@ -536,6 +631,9 @@
     try {
       clearInterval(window.__srTrPoll);
     } catch (e) {}
+    try {
+      clearInterval(window.__srTrPrefetch);
+    } catch (e2) {}
   }
 
   function startAutoTranslateObserver() {
@@ -543,8 +641,8 @@
     autoObs = new MutationObserver(function () {
       clearTimeout(observerTimer);
       observerTimer = setTimeout(function () {
-        translateNewBlocksOnly();
-      }, 600);
+        translateNewBlocksOnly({ silent: isContinuousSession(), prefetch: false });
+      }, 500);
     });
     try {
       autoObs.observe(document.body, { childList: true, subtree: true });
@@ -555,6 +653,7 @@
     try {
       lastCha = document.querySelectorAll(".cha-words, .cha-content").length;
     } catch (e0) {}
+
     clearInterval(window.__srTrPoll);
     window.__srTrPoll = setInterval(function () {
       if (!isTranslateWanted()) return;
@@ -566,9 +665,21 @@
       if (h > lastH + 80 || cha > lastCha) {
         lastH = h;
         lastCha = cha;
-        translateNewBlocksOnly();
+        translateNewBlocksOnly({ silent: isContinuousSession(), prefetch: false });
       }
-    }, 1200);
+    }, 1000);
+
+    // Prefetch định kỳ khi gần đáy + đang nghe/cuộn (hoặc user gần đáy)
+    clearInterval(window.__srTrPrefetch);
+    window.__srTrPrefetch = setInterval(function () {
+      if (!isTranslateWanted() || isBusy) return;
+      var near = distToBottom() < 1600;
+      if (!near) return;
+      // Continuous: luôn prefetch; user thường: chỉ khi rất gần đáy
+      if (isContinuousSession() || distToBottom() < 1000) {
+        translateNewBlocksOnly({ silent: true, prefetch: true });
+      }
+    }, 1800);
 
     if (!window.__srTrScrollBound) {
       window.__srTrScrollBound = true;
@@ -576,15 +687,17 @@
         "scroll",
         function () {
           if (!isTranslateWanted()) return;
+          // Nudge translate không kích hoạt lại (tránh vòng)
+          if (window.__srTranslateNudge) return;
           clearTimeout(window.__srTrScrollT);
           window.__srTrScrollT = setTimeout(function () {
-            if (
-              window.scrollY + window.innerHeight >
-              document.documentElement.scrollHeight - 900
-            ) {
-              translateNewBlocksOnly();
+            if (distToBottom() < 1200) {
+              translateNewBlocksOnly({
+                silent: isContinuousSession(),
+                prefetch: true,
+              });
             }
-          }, 500);
+          }, 350);
         },
         { passive: true }
       );
