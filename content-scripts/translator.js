@@ -269,8 +269,7 @@
       var isManga = knownManga || (bigImgs >= 3 && textLen < 200);
 
       if (isManga && window.StoryImageTranslate) {
-        window.StoryReaderUI?.toast?.("Truyện tranh — OCR ảnh…", 15000);
-        try {
+                try {
           var n = await window.StoryImageTranslate.translateInRoot(null, {
             loose: true,
             silent: false,
@@ -286,7 +285,7 @@
           );
         } catch (e2) {
           console.warn("[Translate] manga OCR", e2);
-          window.StoryReaderUI?.toast?.("OCR lỗi: " + (e2.message || e2), 4000);
+          console.warn("[Translate] manga OCR", e2);
         }
         return false;
       }

@@ -784,7 +784,43 @@ span.sr-sent.sr-on {
 }
 
 @media (max-width: 640px) {
-  #sr-tts-panel { width: 100%; }
+  /* Mobile: panel dạng sheet dưới màn hình, đóng = ẩn hẳn (không lộ viền) */
+  #sr-tts-panel {
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    height: min(78vh, 100dvh) !important;
+    max-height: 78vh !important;
+    border-left: none !important;
+    border-top: 1px solid var(--sr-border);
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -10px 36px rgba(0, 0, 0, 0.35);
+    transform: translateY(110%) !important;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  #sr-tts-panel.sr-open {
+    transform: translateY(0) !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+  }
+  /* Chưa mở list: ẩn hoàn toàn — không lộ viền dưới màn hình */
+  #sr-tts-panel:not(.sr-open) {
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+  /* Mới load (đóng): header padding lớn theo yêu cầu */
+  #sr-tts-panel:not(.sr-open) .sr-tts-header {
+    padding: 100px 10px 8px 12px !important;
+  }
+  /* Bấm mở list: padding gọn */
+  #sr-tts-panel.sr-open .sr-tts-header {
+    padding: 10px 10px 8px 12px !important;
+  }
+  #sr-sentence-list {
+    max-height: 42vh !important;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   #sr-bubble, #sr-menu, #sr-tts-panel { transition: none; }
@@ -1226,18 +1262,66 @@ body.sr-theme-light #sr-hud-status,
 }
 
 
-/* OCR help in settings */
-#sr-tts-panel .sr-info-btn {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
+/* Dịch thuật — field + API keys + help */
+#sr-tts-panel .sr-field {
+  margin-top: 8px;
+}
+#sr-tts-panel .sr-field:first-of-type {
+  margin-top: 0;
+}
+#sr-tts-panel .sr-field > .sr-slider-label {
+  display: block;
+  margin-bottom: 6px;
+}
+#sr-tts-panel .sr-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+#sr-tts-panel .sr-field-api {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--sr-border-soft);
+}
+#sr-tts-panel .sr-input {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  padding: 9px 12px;
+  border-radius: 8px;
   border: 1px solid var(--sr-border);
-  background: var(--sr-accent-soft);
+  background: var(--sr-bg);
+  color: var(--sr-text);
+  font-size: 12.5px;
+  font-family: var(--sr-font);
+  outline: none;
+}
+#sr-tts-panel .sr-input::placeholder {
+  color: var(--sr-muted);
+  opacity: 0.85;
+}
+#sr-tts-panel .sr-input:focus {
+  border-color: var(--sr-accent);
+  box-shadow: 0 0 0 2px var(--sr-accent-soft);
+}
+#sr-tts-panel .sr-info-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 229, 255, 0.35);
+  background: transparent;
   color: var(--sr-accent);
-  font: 600 12px/1 var(--sr-font);
+  font: 700 11px/1 var(--sr-font);
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 #sr-tts-panel .sr-info-btn:hover {
   background: var(--sr-accent);
@@ -1248,11 +1332,24 @@ body.sr-theme-light #sr-hud-status,
   margin-top: 10px;
   padding: 10px 12px;
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.5;
   color: var(--sr-muted);
   background: var(--sr-bg);
   border: 1px solid var(--sr-border-soft);
-  border-radius: 10px;
+  border-radius: 8px;
+}
+#sr-tts-panel .sr-help-panel p {
+  margin: 0 0 8px;
+}
+#sr-tts-panel .sr-help-panel p:last-child {
+  margin-bottom: 0;
+}
+#sr-tts-panel .sr-help-panel ol {
+  margin: 4px 0 10px;
+  padding-left: 18px;
+}
+#sr-tts-panel .sr-help-panel li {
+  margin: 2px 0;
 }
 #sr-tts-panel .sr-help-panel a {
   color: var(--sr-accent);
@@ -1263,4 +1360,21 @@ body.sr-theme-light #sr-hud-status,
 }
 #sr-tts-panel .sr-help-panel strong {
   color: var(--sr-text);
+  font-weight: 600;
+}
+#sr-tts-panel .sr-help-note {
+  font-size: 11px;
+  opacity: 0.9;
+  border-top: 1px solid var(--sr-border-soft);
+  padding-top: 8px;
+  margin-top: 4px !important;
+}
+#sr-tts-panel.sr-theme-light .sr-input {
+  background: #f6f8fa;
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #1f2328;
+}
+#sr-tts-panel.sr-theme-light .sr-info-btn {
+  border-color: rgba(0, 184, 212, 0.4);
+  color: #00b8d4;
 }

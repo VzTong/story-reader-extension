@@ -320,58 +320,85 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 ? "Chinese"
                 : targetLang;
         const prompt =
-          "You are reading a manga/manhwa/webtoon page screenshot. " +
-          "Extract ALL text inside speech bubbles and captions, in reading order " +
-          "(top-to-bottom, then left-to-right unless it's Japanese manga right-to-left). " +
-          "Then translate each line into " +
+          "You are reading a manga/manhwa/webtoon panel. " +
+          "Source text is often Vietnamese (or Korean/Japanese/Chinese). " +
+          "1) Find every speech bubble / caption from top to bottom. " +
+          "2) Read the text accurately (preserve meaning). " +
+          "3) Translate each bubble into " +
           langName +
           ". " +
-          "Output ONLY the translated lines, one speech bubble per line. " +
-          "No numbering, no markdown, no commentary.";
-        const url =
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" +
-          encodeURIComponent(apiKey);
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { text: prompt },
-                  { inline_data: { mime_type: mime, data: b64 } },
-                ],
-              },
-            ],
-            generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
-          }),
+          "Output ONLY the translated text, one bubble per line, same order as on the image. " +
+          "Do not translate website UI (ads, chapter, follow buttons). " +
+          "No numbering, no markdown, no extra commentary.";
+        // gemini-2.0-flash đã 404 — thử các model còn live
+        const models = [
+          "gemini-2.5-flash",
+          "gemini-2.0-flash-001",
+          "gemini-1.5-flash",
+          "gemini-1.5-flash-latest",
+          "gemini-flash-latest",
+        ];
+        const body = JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+                { inline_data: { mime_type: mime, data: b64 } },
+              ],
+            },
+          ],
+          generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
         });
-        if (!res.ok) {
-          const errBody = await res.text().catch(function () {
-            return "";
+        let text = "";
+        let lastErr = "";
+        for (let mi = 0; mi < models.length; mi++) {
+          const url =
+            "https://generativelanguage.googleapis.com/v1beta/models/" +
+            models[mi] +
+            ":generateContent?key=" +
+            encodeURIComponent(apiKey);
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: body,
           });
+          if (!res.ok) {
+            const errBody = await res.text().catch(function () {
+              return "";
+            });
+            lastErr = "gemini http " + res.status + " " + errBody.slice(0, 100);
+            console.warn("[SR] Gemini model fail", models[mi], lastErr);
+            if (res.status === 404) continue; // thử model khác
+            if (res.status === 429) {
+              sendResponse({ ok: false, error: lastErr });
+              return;
+            }
+            continue;
+          }
+          const data = await res.json();
+          const parts =
+            data &&
+            data.candidates &&
+            data.candidates[0] &&
+            data.candidates[0].content &&
+            data.candidates[0].content.parts;
+          if (parts) {
+            for (let i = 0; i < parts.length; i++) {
+              if (parts[i].text) text += parts[i].text;
+            }
+          }
+          text = (text || "").trim();
+          if (text) {
+            console.log("[SR] Gemini ok via", models[mi]);
+            break;
+          }
+          lastErr = "gemini empty (" + models[mi] + ")";
+        }
+        if (!text) {
           sendResponse({
             ok: false,
-            error: "gemini http " + res.status + " " + errBody.slice(0, 120),
+            error: lastErr || "gemini empty",
           });
-          return;
-        }
-        const data = await res.json();
-        const parts =
-          data &&
-          data.candidates &&
-          data.candidates[0] &&
-          data.candidates[0].content &&
-          data.candidates[0].content.parts;
-        let text = "";
-        if (parts) {
-          for (let i = 0; i < parts.length; i++) {
-            if (parts[i].text) text += parts[i].text;
-          }
-        }
-        text = (text || "").trim();
-        if (!text) {
-          sendResponse({ ok: false, error: "gemini empty" });
           return;
         }
         sendResponse({ ok: true, text: text });
