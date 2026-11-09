@@ -1686,7 +1686,7 @@
 
   }
 
-  let toolbarVisible = false;
+  let toolbarVisible = true;
   let currentTheme = "dark";
 
   /** @type {HTMLElement|null} */
@@ -3337,7 +3337,7 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || !msg.type) return;
-    if (msg.type === "SHOW_TOOLBAR") {
+    if (msg.type === "__SR_BOOKMARK_MODE__") {
       showToolbar();
       sendResponse?.({ ok: true });
     } else if (msg.type === "HIDE_TOOLBAR") {
