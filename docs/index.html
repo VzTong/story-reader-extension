@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Story Reader — Cài bookmark (điện thoại & máy tính)</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card: #161b22;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #00e5ff;
+      --border: rgba(255, 255, 255, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      padding: 20px 16px 48px;
+      max-width: 640px;
+      margin-inline: auto;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 8px; }
+    h2 { font-size: 1.05rem; margin: 28px 0 10px; color: var(--accent); }
+    p, li { color: var(--text); font-size: 0.95rem; }
+    .muted { color: var(--muted); font-size: 0.88rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      margin: 14px 0;
+    }
+    .btn {
+      display: inline-block;
+      padding: 12px 18px;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #060a12;
+      font-weight: 700;
+      text-decoration: none;
+      border: none;
+      cursor: grab;
+      font-size: 0.95rem;
+    }
+    .btn:active { cursor: grabbing; }
+    .btn-outline {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid rgba(0, 229, 255, 0.4);
+    }
+    code, .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.8rem;
+      word-break: break-all;
+    }
+    .codebox {
+      background: #010409;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      margin: 10px 0;
+      max-height: 120px;
+      overflow: auto;
+    }
+    ol { padding-left: 1.2rem; }
+    .warn {
+      border-left: 3px solid #f0c14b;
+      padding-left: 12px;
+      color: #e6edf3;
+    }
+    a { color: var(--accent); }
+  </style>
+<script type="text/javascript" nonce="3007da668aae41b9a083ccb15d4" src="//local.adguard.org?ts=1794213287525&amp;type=content-script&amp;dmn=storage.googleapis.com&amp;url=https%3A%2F%2Fstorage.googleapis.com%2Fgrok-terminal-artifacts-prod%2Fprojects%2Fe7bf1db3-b00e-4baf-84b8-e0131d5a1166%2Fsr-repo%2Fdocs%2Findex.html%3FX-Goog-Algorithm%3DGOOG4-RSA-SHA256%26X-Goog-Credential%3Dgrok-files-prod%2540enterprise-api-425510.iam.gserviceaccount.com%252F20261109%252Fauto%252Fstorage%252Fgoog4_request%26X-Goog-Date%3D20261109T102747Z%26X-Goog-Expires%3D900%26X-Goog-SignedHeaders%3Dhost%26X-Goog-Signature%3D28f5bcba066b8b9a622e9f735ac4faeb74ac0139e2e8ffc1a1168fa708a855d9a6e0e8921cd72b84794a9595d8944e9a0a529a3764895d80ec860ea66b0cfa44870f51b796b58a0246cced0e259e6f16b73acb7a87c7f9e0f9e135e174daf3a0c6586dc842041b640a0f93b80123f4e3448f52f3aa8049211fac4dd487b1ec2cdf2e118bcbc7609ac8b62bc55b6eca32a7e816c6ee59a13885a756b8c1ae51efae9961b22feacf2ce3403b6a208342a7e363cf8e866e0b0432eac3f9fa66ab49d8db26fdd25c167862854c0e28918449dbf773b34ec238601034cbf20fee2dc7f8342533b33382a0b2b3cf1cf8d481fdb6f68b4dc136dd681df86ee837a9ac9c&amp;app=com.android.chrome&amp;css=3&amp;js=1&amp;rel=1&amp;rji=1&amp;sbe=1&amp;stealth=1&amp;st-dnt"></script><script type="text/javascript" nonce="3007da668aae41b9a083ccb15d4" src="//local.adguard.org?ts=1794213287525&amp;name=AdGuard%20Extra&amp;type=user-script"></script></head>
+<body>
+  <h1>Story Reader</h1>
+  <p class="muted">
+    Đọc truyện · TTS · auto-scroll · dịch chữ — dùng bằng <strong>bookmark</strong> trên điện thoại
+    (Chrome / Safari) <strong>không cần</strong> cài extension hay Kiwi.
+  </p>
+
+  <div class="card">
+    <h2 style="margin-top:0">1. Kéo bookmark (máy tính)</h2>
+    <p>Kéo nút dưới đây lên thanh Bookmark của trình duyệt:</p>
+    <p>
+      <a class="btn" id="bm-link" href="#">📖 Story Reader</a>
+    </p>
+    <p class="muted">Rồi mở trang chương truyện → bấm bookmark đó.</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">2. Điện thoại (Chrome / Safari)</h2>
+    <ol>
+      <li>Copy toàn bộ dòng <strong>javascript:…</strong> trong hộp bên dưới.</li>
+      <li>Bookmark trang này (★ / Share → Bookmark).</li>
+      <li>Vào danh sách bookmark → <strong>Sửa</strong> bookmark vừa tạo.</li>
+      <li>Xóa URL cũ, <strong>dán</strong> đoạn javascript:… → Lưu (đặt tên: Story Reader).</li>
+      <li>Mở trang <em>chương truyện</em> → mở bookmark <strong>Story Reader</strong>.</li>
+    </ol>
+    <p class="muted">
+      Chrome Android: gõ tên bookmark trên thanh địa chỉ rồi chọn bookmark
+      (mở từ màn hình bookmark đôi khi thoát trang → script không chạy).
+    </p>
+    <div class="codebox mono" id="bm-code"></div>
+    <p>
+      <button type="button" class="btn btn-outline" id="btn-copy">Copy javascript:…</button>
+    </p>
+  </div>
+
+  <div class="card warn">
+    <strong>Giới hạn (so với extension máy tính)</strong>
+    <ul>
+      <li>Một số site (CSP chặt) chặn tải script từ ngoài → bookmark không chạy.</li>
+      <li>OCR / dịch chữ trong ảnh truyện tranh: chỉ bản extension.</li>
+      <li>Google TTS qua server extension: trên ĐT dùng <strong>giọng máy (Web Speech)</strong>.</li>
+      <li>Mỗi lần mở trang mới / đổi chương: cần bấm lại bookmark (không tự inject).</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">3. Bật GitHub Pages (bắt buộc 1 lần)</h2>
+    <p class="muted">
+      Link <code>https://vztong.github.io/story-reader-extension/</code> hiện 404 nếu chưa bật Pages.
+    </p>
+    <ol>
+      <li>Repo → <strong>Settings → Pages</strong></li>
+      <li>Source: <strong>Deploy from a branch</strong></li>
+      <li>Branch: <strong>main</strong> · Folder: <strong>/docs</strong> → Save</li>
+      <li>Đợi 1–2 phút, F5 trang này</li>
+    </ol>
+    <p class="muted">
+      File cần có trên branch: <code>docs/index.html</code>, <code>docs/loader.js</code>, <code>docs/shim.js</code>.
+      Script chính vẫn lấy từ repo (<code>content-scripts/</code>, <code>ui/</code>) qua Pages hoặc jsDelivr.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Extension máy tính (đầy đủ tính năng)</h2>
+    <p>
+      <a href="https://github.com/VzTong/story-reader-extension">GitHub repo</a>
+      → Load unpacked trên Chrome desktop.
+    </p>
+  </div>
+
+  <script>
+    (function () {
+      var src =
+        "https://vztong.github.io/story-reader-extension/loader.js?t=" +
+        Date.now();
+      // Fallback CDN nếu Pages chưa sẵn sàng — user có thể đổi
+      var bm =
+        "javascript:(function(){var s=document.createElement('script');s.src='" +
+        src.replace(/'/g, "") +
+        "';s.onerror=function(){var t=document.createElement('script');t.src='https://cdn.jsdelivr.net/gh/VzTong/story-reader-extension@main/docs/loader.js?t='+Date.now();document.documentElement.appendChild(t);};document.documentElement.appendChild(s);})();";
+
+      var link = document.getElementById("bm-link");
+      link.setAttribute("href", bm);
+
+      var box = document.getElementById("bm-code");
+      box.textContent = bm;
+
+      document.getElementById("btn-copy").addEventListener("click", function () {
+        navigator.clipboard.writeText(bm).then(
+          function () {
+            alert("Đã copy. Sửa bookmark trên ĐT và dán vào ô URL.");
+          },
+          function () {
+            prompt("Copy thủ công:", bm);
+          }
+        );
+      });
+    })();
+  </script>
+</body>
+</html>
