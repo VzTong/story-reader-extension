@@ -11,7 +11,7 @@
  * API public: window.StoryReaderUI (showToolbar, setPlaying, buildSentenceList, …).
  * Style: ui/floating-toolbar.css — token màu --sr-accent #00e5ff.
  */
-(function () {
+(function() {
   "use strict";
 
 
@@ -40,1649 +40,1649 @@
 
   /* ===== Inline modules (tránh eval / CSP trang) ===== */
   if (!window.StoryTranslator) {
-/**
- * Module dịch trang — giữ layout bằng cách dịch theo khối DOM (p, h1, li…).
- *
- * API: window.StoryTranslator
- *  - translatePage(targetLang)
- *  - restoreOriginal() / toggleOriginal()
- *  - isTranslated() / isTranslateWanted()
- *  - startAutoTranslateObserver()
- */
-(function () {
-  "use strict";
+    /**
+     * Module dịch trang — giữ layout bằng cách dịch theo khối DOM (p, h1, li…).
+     *
+     * API: window.StoryTranslator
+     *  - translatePage(targetLang)
+     *  - restoreOriginal() / toggleOriginal()
+     *  - isTranslated() / isTranslateWanted()
+     *  - startAutoTranslateObserver()
+     */
+    (function() {
+      "use strict";
 
-  /** element → { html or text, mode } */
-  var originalMap = new Map();
-  var translatedEls = [];
-  var showingOriginal = false;
-  var isBusy = false;
-  var abortFlag = false;
-  var translateWanted = false;
-  var dailyCharsKey = "sr-translate-chars-" + new Date().toISOString().slice(0, 10);
-  var autoObs = null;
-  var observerTimer = null;
+      /** element → { html or text, mode } */
+      var originalMap = new Map();
+      var translatedEls = [];
+      var showingOriginal = false;
+      var isBusy = false;
+      var abortFlag = false;
+      var translateWanted = false;
+      var dailyCharsKey = "sr-translate-chars-" + new Date().toISOString().slice(0, 10);
+      var autoObs = null;
+      var observerTimer = null;
 
-  function getDailyChars() {
-    try {
-      return parseInt(localStorage.getItem(dailyCharsKey) || "0", 10) || 0;
-    } catch (e) {
-      return 0;
-    }
-  }
-  function addDailyChars(n) {
-    try {
-      localStorage.setItem(dailyCharsKey, String(getDailyChars() + n));
-    } catch (e) {}
-  }
-
-  function getTranslateRoot() {
-    var sels = [
-      // nguontruyen / wordpress novel
-      ".chapter-c",
-      "#chapter-content",
-      ".box-chap",
-      ".content-chapter",
-      ".chapter-content",
-      "#chapterContent",
-      ".reading-content",
-      ".text-left",
-      "div.entry-content",
-      "article .entry-content",
-      // webnovel / orv
-      "article",
-      "main",
-      ".cha-words",
-      ".cha-content",
-      ".prose",
-      ".post-content",
-      "#content",
-      "[class*='chapter-content']",
-      "[class*='chapter_content']",
-      "[class*='reader']",
-    ];
-    var best = null;
-    var bestLen = 0;
-    for (var i = 0; i < sels.length; i++) {
-      var nodes = document.querySelectorAll(sels[i]);
-      for (var j = 0; j < nodes.length; j++) {
-        var el = nodes[j];
-        if (el.closest && el.closest("[id^='sr-']")) continue;
-        var len = ((el.innerText || "").trim()).length;
-        if (len > bestLen && len > 80) {
-          bestLen = len;
-          best = el;
+      function getDailyChars() {
+        try {
+          return parseInt(localStorage.getItem(dailyCharsKey) || "0", 10) || 0;
+        } catch (e) {
+          return 0;
         }
       }
-    }
-    return best || document.body;
-  }
+      function addDailyChars(n) {
+        try {
+          localStorage.setItem(dailyCharsKey, String(getDailyChars() + n));
+        } catch (e) { }
+      }
 
-  /**
-   * Các khối hiển thị — mỗi khối = 1 đơn vị dịch → giữ khoảng cách/layout.
-   * Không lấy div lồng nhau (chỉ leaf-ish block).
-   */
-  function collectBlocks(root) {
-    root = root || getTranslateRoot();
-    var sel =
-      "p, h1, h2, h3, h4, h5, h6, li, blockquote, figcaption, td, th, pre, dt, dd, summary";
-    var list = [];
-    var seen = new Set();
-    root.querySelectorAll(sel).forEach(function (el) {
-      if (el.closest && el.closest("[id^='sr-']")) return;
-      if (seen.has(el)) return;
-      var text = (el.innerText || "").trim();
-      if (text.length < 3) return;
-      if (text.length < 8 && /next|prev|menu|share/i.test(text)) return;
-      seen.add(el);
-      list.push(el);
-    });
+      function getTranslateRoot() {
+        var sels = [
+          // nguontruyen / wordpress novel
+          ".chapter-c",
+          "#chapter-content",
+          ".box-chap",
+          ".content-chapter",
+          ".chapter-content",
+          "#chapterContent",
+          ".reading-content",
+          ".text-left",
+          "div.entry-content",
+          "article .entry-content",
+          // webnovel / orv
+          "article",
+          "main",
+          ".cha-words",
+          ".cha-content",
+          ".prose",
+          ".post-content",
+          "#content",
+          "[class*='chapter-content']",
+          "[class*='chapter_content']",
+          "[class*='reader']",
+        ];
+        var best = null;
+        var bestLen = 0;
+        for (var i = 0; i < sels.length; i++) {
+          var nodes = document.querySelectorAll(sels[ i ]);
+          for (var j = 0; j < nodes.length; j++) {
+            var el = nodes[ j ];
+            if (el.closest && el.closest("[id^='sr-']")) continue;
+            var len = ((el.innerText || "").trim()).length;
+            if (len > bestLen && len > 80) {
+              bestLen = len;
+              best = el;
+            }
+          }
+        }
+        return best || document.body;
+      }
 
-    // webnovel.com: .cha-words / đoạn trong chapter mới load
-    try {
-      document
-        .querySelectorAll(
-          ".cha-words, .cha-content, [class*='cha-words'], [class*='cha-paragraph'], .chapter_content p, .cha-words div"
-        )
-        .forEach(function (el) {
+      /**
+       * Các khối hiển thị — mỗi khối = 1 đơn vị dịch → giữ khoảng cách/layout.
+       * Không lấy div lồng nhau (chỉ leaf-ish block).
+       */
+      function collectBlocks(root) {
+        root = root || getTranslateRoot();
+        var sel =
+          "p, h1, h2, h3, h4, h5, h6, li, blockquote, figcaption, td, th, pre, dt, dd, summary";
+        var list = [];
+        var seen = new Set();
+        root.querySelectorAll(sel).forEach(function(el) {
           if (el.closest && el.closest("[id^='sr-']")) return;
           if (seen.has(el)) return;
-          // Bỏ container lớn đã có p con trong list
-          if (el.querySelector && el.querySelector("p") && el.matches(".cha-words, .cha-content")) {
+          var text = (el.innerText || "").trim();
+          if (text.length < 3) return;
+          if (text.length < 8 && /next|prev|menu|share/i.test(text)) return;
+          seen.add(el);
+          list.push(el);
+        });
+
+        // webnovel.com: .cha-words / đoạn trong chapter mới load
+        try {
+          document
+            .querySelectorAll(
+              ".cha-words, .cha-content, [class*='cha-words'], [class*='cha-paragraph'], .chapter_content p, .cha-words div"
+            )
+            .forEach(function(el) {
+              if (el.closest && el.closest("[id^='sr-']")) return;
+              if (seen.has(el)) return;
+              // Bỏ container lớn đã có p con trong list
+              if (el.querySelector && el.querySelector("p") && el.matches(".cha-words, .cha-content")) {
+                return;
+              }
+              var text = (el.innerText || "").trim();
+              if (text.length < 8) return;
+              if (text.length > 5000) return;
+              seen.add(el);
+              list.push(el);
+            });
+        } catch (eWn) { }
+
+
+        // Fallback: khối text dài (nguontruyen hay 1 div + <br>)
+        if (list.length < 3) {
+          root.querySelectorAll("div").forEach(function(el) {
+            if (el.closest && el.closest("[id^='sr-']")) return;
+            if (seen.has(el)) return;
+            if (el.querySelector(sel)) return;
+            var text = (el.innerText || "").trim();
+            if (text.length < 40) return;
+            // 1 khối lớn: tách theo đoạn \n\n nếu quá dài
+            if (text.length > 80) {
+              seen.add(el);
+              list.push(el);
+            }
+          });
+        }
+        // Nếu chỉ 1 khối rất dài — vẫn dịch được (translateLong cắt chunk)
+        return list;
+      }
+
+      function guessSourceLang(sample) {
+        var s = sample || "";
+        var cjk = (s.match(/[\u4e00-\u9fff]/g) || []).length;
+        var vi = (
+          s.match(
+            /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/gi
+          ) || []
+        ).length;
+        if (cjk > 10) return "zh-CN";
+        if (vi > 15) return "vi";
+        return "en";
+      }
+
+      function translateChunk(text, langpair) {
+        return new Promise(function(resolve, reject) {
+          if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+            reject(new Error("Extension context invalidated — F5 trang sau khi Reload extension"));
             return;
           }
-          var text = (el.innerText || "").trim();
-          if (text.length < 8) return;
-          if (text.length > 5000) return;
-          seen.add(el);
-          list.push(el);
-        });
-    } catch (eWn) {}
-
-
-    // Fallback: khối text dài (nguontruyen hay 1 div + <br>)
-    if (list.length < 3) {
-      root.querySelectorAll("div").forEach(function (el) {
-        if (el.closest && el.closest("[id^='sr-']")) return;
-        if (seen.has(el)) return;
-        if (el.querySelector(sel)) return;
-        var text = (el.innerText || "").trim();
-        if (text.length < 40) return;
-        // 1 khối lớn: tách theo đoạn \n\n nếu quá dài
-        if (text.length > 80) {
-          seen.add(el);
-          list.push(el);
-        }
-      });
-    }
-    // Nếu chỉ 1 khối rất dài — vẫn dịch được (translateLong cắt chunk)
-    return list;
-  }
-
-  function guessSourceLang(sample) {
-    var s = sample || "";
-    var cjk = (s.match(/[\u4e00-\u9fff]/g) || []).length;
-    var vi = (
-      s.match(
-        /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/gi
-      ) || []
-    ).length;
-    if (cjk > 10) return "zh-CN";
-    if (vi > 15) return "vi";
-    return "en";
-  }
-
-  function translateChunk(text, langpair) {
-    return new Promise(function (resolve, reject) {
-      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
-        reject(new Error("Extension context invalidated — F5 trang sau khi Reload extension"));
-        return;
-      }
-      try {
-        chrome.runtime.sendMessage(
-          { type: "MYMEMORY_TRANSLATE", text: text, langpair: langpair },
-          function (resp) {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-              return;
-            }
-            if (resp && resp.ok && resp.translatedText != null) {
-              resolve(String(resp.translatedText));
-            } else {
-              reject(new Error((resp && resp.error) || "translate failed"));
-            }
+          try {
+            chrome.runtime.sendMessage(
+              { type: "MYMEMORY_TRANSLATE", text: text, langpair: langpair },
+              function(resp) {
+                if (chrome.runtime.lastError) {
+                  reject(new Error(chrome.runtime.lastError.message));
+                  return;
+                }
+                if (resp && resp.ok && resp.translatedText != null) {
+                  resolve(String(resp.translatedText));
+                } else {
+                  reject(new Error((resp && resp.error) || "translate failed"));
+                }
+              }
+            );
+          } catch (e) {
+            reject(new Error(String(e && e.message ? e.message : e)));
           }
-        );
-      } catch (e) {
-        reject(new Error(String(e && e.message ? e.message : e)));
-      }
-    });
-  }
-
-  function sleep(ms) {
-    return new Promise(function (r) {
-      setTimeout(r, ms);
-    });
-  }
-
-  /**
-   * Dịch text dài: cắt ≤450, ghép lại bằng khoảng trắng (giữ trong 1 khối).
-   */
-  async function translateLong(text, langpair) {
-    if (text.length <= 450) {
-      addDailyChars(text.length);
-      return await translateChunk(text, langpair);
-    }
-    var parts = [];
-    for (var p = 0; p < text.length; p += 450) {
-      if (p > 0) await sleep(40);
-      var slice = text.slice(p, p + 450);
-      parts.push(await translateChunk(slice, langpair));
-      addDailyChars(slice.length);
-    }
-    return parts.join(" ");
-  }
-
-  /**
-   * Gán bản dịch vào element mà KHÔNG phá cấu trúc con nếu có thể:
-   * - Không có element con → textContent
-   * - Có con → chỉ thay text node lá (tuần tự), không gộp
-   */
-  function applyTranslationToEl(el, translated) {
-    if (!el.children || el.children.length === 0) {
-      el.textContent = translated;
-      return;
-    }
-    // Có child (a, strong…): thay toàn bộ textContent sẽ mất style —
-    // chấp nhận mất style inline để giữ block layout (quan trọng hơn)
-    el.textContent = translated;
-  }
-
-  async function translatePage(targetLang) {
-    if (isBusy) {
-      window.StoryReaderUI?.toast?.("Đang dịch…");
-      return false;
-    }
-    targetLang = targetLang || localStorage.getItem("sr-target-lang") || "vi";
-    isBusy = true;
-    abortFlag = false;
-    try {
-      try {
-        window.__srWasSpeakingBeforeTranslate = !!(
-          window.StoryTTS &&
-          (window.StoryTTS.isSpeaking?.() ||
-            document.querySelector("#sr-panel-play.sr-playing"))
-        );
-      } catch (eW) {
-        window.__srWasSpeakingBeforeTranslate = false;
-      }
-      var host = (location.hostname || "").toLowerCase();
-      var knownManga =
-        /kagane|nettruyen|truyenqq|truyentranh|mangadex|webtoon|asura|newtruyen|comick|manhwa|manhua/.test(
-          host
-        );
-
-      // Chỉ site manga mới OCR-only. Truyện chữ → dịch text.
-      var blocks = collectBlocks();
-      var textLen = 0;
-      blocks.forEach(function (b) {
-        textLen += ((b.innerText || "").trim()).length;
-      });
-
-      var bigImgs = 0;
-      try {
-        document.querySelectorAll("img").forEach(function (img) {
-          if (img.closest && img.closest("[id^='sr-']")) return;
-          var w = Math.max(
-            img.naturalWidth || 0,
-            img.width || 0,
-            img.clientWidth || 0
-          );
-          var h = Math.max(
-            img.naturalHeight || 0,
-            img.height || 0,
-            img.clientHeight || 0
-          );
-          if (w >= 200 && h >= 200) bigImgs++;
         });
-      } catch (e0) {}
+      }
 
-      // Manga host HOẶC (≥3 ảnh lớn VÀ rất ít chữ)
-      var isManga = knownManga || (bigImgs >= 3 && textLen < 200);
+      function sleep(ms) {
+        return new Promise(function(r) {
+          setTimeout(r, ms);
+        });
+      }
 
-      if (isManga && window.StoryImageTranslate) {
-        window.StoryReaderUI?.toast?.("Truyện tranh — OCR ảnh…", 15000);
+      /**
+       * Dịch text dài: cắt ≤450, ghép lại bằng khoảng trắng (giữ trong 1 khối).
+       */
+      async function translateLong(text, langpair) {
+        if (text.length <= 450) {
+          addDailyChars(text.length);
+          return await translateChunk(text, langpair);
+        }
+        var parts = [];
+        for (var p = 0; p < text.length; p += 450) {
+          if (p > 0) await sleep(40);
+          var slice = text.slice(p, p + 450);
+          parts.push(await translateChunk(slice, langpair));
+          addDailyChars(slice.length);
+        }
+        return parts.join(" ");
+      }
+
+      /**
+       * Gán bản dịch vào element mà KHÔNG phá cấu trúc con nếu có thể:
+       * - Không có element con → textContent
+       * - Có con → chỉ thay text node lá (tuần tự), không gộp
+       */
+      function applyTranslationToEl(el, translated) {
+        if (!el.children || el.children.length === 0) {
+          el.textContent = translated;
+          return;
+        }
+        // Có child (a, strong…): thay toàn bộ textContent sẽ mất style —
+        // chấp nhận mất style inline để giữ block layout (quan trọng hơn)
+        el.textContent = translated;
+      }
+
+      async function translatePage(targetLang) {
+        if (isBusy) {
+          window.StoryReaderUI?.toast?.("Đang dịch…");
+          return false;
+        }
+        targetLang = targetLang || localStorage.getItem("sr-target-lang") || "vi";
+        isBusy = true;
+        abortFlag = false;
         try {
-          var n = await window.StoryImageTranslate.translateInRoot(null, {
-            loose: true,
-            silent: false,
+          try {
+            window.__srWasSpeakingBeforeTranslate = !!(
+              window.StoryTTS &&
+              (window.StoryTTS.isSpeaking?.() ||
+                document.querySelector("#sr-panel-play.sr-playing"))
+            );
+          } catch (eW) {
+            window.__srWasSpeakingBeforeTranslate = false;
+          }
+          var host = (location.hostname || "").toLowerCase();
+          var knownManga =
+            /kagane|nettruyen|truyenqq|truyentranh|mangadex|webtoon|asura|newtruyen|comick|manhwa|manhua/.test(
+              host
+            );
+
+          // Chỉ site manga mới OCR-only. Truyện chữ → dịch text.
+          var blocks = collectBlocks();
+          var textLen = 0;
+          blocks.forEach(function(b) {
+            textLen += ((b.innerText || "").trim()).length;
           });
+
+          var bigImgs = 0;
+          try {
+            document.querySelectorAll("img").forEach(function(img) {
+              if (img.closest && img.closest("[id^='sr-']")) return;
+              var w = Math.max(
+                img.naturalWidth || 0,
+                img.width || 0,
+                img.clientWidth || 0
+              );
+              var h = Math.max(
+                img.naturalHeight || 0,
+                img.height || 0,
+                img.clientHeight || 0
+              );
+              if (w >= 200 && h >= 200) bigImgs++;
+            });
+          } catch (e0) { }
+
+          // Manga host HOẶC (≥3 ảnh lớn VÀ rất ít chữ)
+          var isManga = knownManga || (bigImgs >= 3 && textLen < 200);
+
+          if (isManga && window.StoryImageTranslate) {
+            window.StoryReaderUI?.toast?.("Truyện tranh — OCR ảnh…", 15000);
+            try {
+              var n = await window.StoryImageTranslate.translateInRoot(null, {
+                loose: true,
+                silent: false,
+              });
+              translateWanted = true;
+              try {
+                sessionStorage.setItem("sr-translate-wanted", "1");
+              } catch (e1) { }
+              if (n > 0) return true;
+              window.StoryReaderUI?.toast?.(
+                "OCR chưa đọc được chữ trong ảnh. Thử cuộn để ảnh hiện rõ rồi dịch lại.",
+                4500
+              );
+            } catch (e2) {
+              console.warn("[Translate] manga OCR", e2);
+              window.StoryReaderUI?.toast?.("OCR lỗi: " + (e2.message || e2), 4000);
+            }
+            return false;
+          }
+
+          if (!blocks.length) {
+            window.StoryReaderUI?.toast?.("Không tìm thấy đoạn để dịch");
+            return false;
+          }
+
+          // Lưu HTML gốc để hoàn tác (giữ layout khi restore)
+          translatedEls = [];
+          blocks.forEach(function(el) {
+            if (!originalMap.has(el)) {
+              originalMap.set(el, el.innerHTML);
+            }
+            translatedEls.push(el);
+          });
+
+          var sample = blocks
+            .slice(0, 5)
+            .map(function(el) {
+              return el.innerText;
+            })
+            .join(" ");
+          var source = guessSourceLang(sample);
+          if (source === targetLang) {
+            source = source === "vi" ? "en" : source;
+          }
+          var langpair = source + "|" + targetLang;
+
+          window.StoryReaderUI?.toast?.(
+            "Đang dịch 0/" + blocks.length + " đoạn…",
+            60000
+          );
+
+          var okCount = 0;
+          var failCount = 0;
+
+          for (var i = 0; i < blocks.length; i++) {
+            var el = blocks[ i ];
+            var text = (el.innerText || "").trim();
+            if (text.length < 3) continue;
+            if (abortFlag) break;
+            try {
+              var out = await translateLong(text, langpair);
+              applyTranslationToEl(el, out);
+              okCount++;
+            } catch (err) {
+              failCount++;
+              console.warn("[Translate] block fail", err);
+              if (String(err.message || err).indexOf("invalidated") !== -1) {
+                abortFlag = true;
+                window.StoryReaderUI?.toast?.(
+                  "Extension đã Reload — F5 trang rồi dịch lại",
+                  5000
+                );
+                break;
+              }
+            }
+            if ((i + 1) % 3 === 0 || i + 1 === blocks.length) {
+              window.StoryReaderUI?.toast?.(
+                "Đang dịch " +
+                (i + 1) +
+                "/" +
+                blocks.length +
+                (failCount ? " (lỗi:" + failCount + ")" : "") +
+                "…",
+                60000
+              );
+            }
+            await sleep(25);
+          }
+
+          // Không OCR trên truyện chữ — OCR chỉ khi isManga (nhánh trên).
+          // Tránh overlay OCR dính lên trang novel.
+
+          showingOriginal = false;
           translateWanted = true;
           try {
             sessionStorage.setItem("sr-translate-wanted", "1");
-          } catch (e1) {}
-          if (n > 0) return true;
-          window.StoryReaderUI?.toast?.(
-            "OCR chưa đọc được chữ trong ảnh. Thử cuộn để ảnh hiện rõ rồi dịch lại.",
-            4500
-          );
-        } catch (e2) {
-          console.warn("[Translate] manga OCR", e2);
-          window.StoryReaderUI?.toast?.("OCR lỗi: " + (e2.message || e2), 4000);
-        }
-        return false;
-      }
+          } catch (e) { }
+          startAutoTranslateObserver();
 
-      if (!blocks.length) {
-        window.StoryReaderUI?.toast?.("Không tìm thấy đoạn để dịch");
-        return false;
-      }
-
-      // Lưu HTML gốc để hoàn tác (giữ layout khi restore)
-      translatedEls = [];
-      blocks.forEach(function (el) {
-        if (!originalMap.has(el)) {
-          originalMap.set(el, el.innerHTML);
-        }
-        translatedEls.push(el);
-      });
-
-      var sample = blocks
-        .slice(0, 5)
-        .map(function (el) {
-          return el.innerText;
-        })
-        .join(" ");
-      var source = guessSourceLang(sample);
-      if (source === targetLang) {
-        source = source === "vi" ? "en" : source;
-      }
-      var langpair = source + "|" + targetLang;
-
-      window.StoryReaderUI?.toast?.(
-        "Đang dịch 0/" + blocks.length + " đoạn…",
-        60000
-      );
-
-      var okCount = 0;
-      var failCount = 0;
-
-      for (var i = 0; i < blocks.length; i++) {
-        var el = blocks[i];
-        var text = (el.innerText || "").trim();
-        if (text.length < 3) continue;
-        if (abortFlag) break;
-        try {
-          var out = await translateLong(text, langpair);
-          applyTranslationToEl(el, out);
-          okCount++;
-        } catch (err) {
-          failCount++;
-          console.warn("[Translate] block fail", err);
-          if (String(err.message || err).indexOf("invalidated") !== -1) {
-            abortFlag = true;
-            window.StoryReaderUI?.toast?.(
-              "Extension đã Reload — F5 trang rồi dịch lại",
-              5000
-            );
-            break;
-          }
-        }
-        if ((i + 1) % 3 === 0 || i + 1 === blocks.length) {
-          window.StoryReaderUI?.toast?.(
-            "Đang dịch " +
-              (i + 1) +
+          var msg =
+            okCount === 0
+              ? "Dịch thất bại (rate-limit). Thử lại sau."
+              : "✓ Đã dịch " +
+              okCount +
               "/" +
               blocks.length +
-              (failCount ? " (lỗi:" + failCount + ")" : "") +
-              "…",
-            60000
-          );
-        }
-        await sleep(25);
-      }
+              " đoạn → " +
+              targetLang +
+              (failCount ? " (" + failCount + " lỗi)" : "");
+          window.StoryReaderUI?.toast?.(msg, 4500);
 
-      // Không OCR trên truyện chữ — OCR chỉ khi isManga (nhánh trên).
-      // Tránh overlay OCR dính lên trang novel.
-
-      showingOriginal = false;
-      translateWanted = true;
-      try {
-        sessionStorage.setItem("sr-translate-wanted", "1");
-      } catch (e) {}
-      startAutoTranslateObserver();
-
-      var msg =
-        okCount === 0
-          ? "Dịch thất bại (rate-limit). Thử lại sau."
-          : "✓ Đã dịch " +
-            okCount +
-            "/" +
-            blocks.length +
-            " đoạn → " +
-            targetLang +
-            (failCount ? " (" + failCount + " lỗi)" : "");
-      window.StoryReaderUI?.toast?.(msg, 4500);
-
-      // Đang nghe → đọc tiếp bằng bản dịch
-      try {
-        var wasOn =
-          window.StoryTTS &&
-          (window.StoryTTS.isSpeaking?.() ||
-            document.getElementById("sr-panel-play")?.classList.contains("sr-playing"));
-        if (wasOn || window.__srWasSpeakingBeforeTranslate) {
-          window.__srWasSpeakingBeforeTranslate = false;
-          // Giữ lock-index: đọc tiếp đúng chỗ, không theo viewport
+          // Đang nghe → đọc tiếp bằng bản dịch
           try {
-            sessionStorage.setItem("sr-tts-lock-index", "1");
-          } catch (eL) {}
-          setTimeout(function () {
-            window.StoryTTS?.extendQueueFromPage?.() ||
-              window.StoryTTS?.startFromPage?.();
-          }, 400);
+            var wasOn =
+              window.StoryTTS &&
+              (window.StoryTTS.isSpeaking?.() ||
+                document.getElementById("sr-panel-play")?.classList.contains("sr-playing"));
+            if (wasOn || window.__srWasSpeakingBeforeTranslate) {
+              window.__srWasSpeakingBeforeTranslate = false;
+              // Giữ lock-index: đọc tiếp đúng chỗ, không theo viewport
+              try {
+                sessionStorage.setItem("sr-tts-lock-index", "1");
+              } catch (eL) { }
+              setTimeout(function() {
+                window.StoryTTS?.extendQueueFromPage?.() ||
+                  window.StoryTTS?.startFromPage?.();
+              }, 400);
+            }
+          } catch (eR) { }
+
+          return okCount > 0;
+        } catch (err) {
+          console.warn("[Translate]", err);
+          window.StoryReaderUI?.toast?.("Dịch lỗi: " + (err.message || err));
+          return false;
+        } finally {
+          isBusy = false;
         }
-      } catch (eR) {}
-
-      return okCount > 0;
-    } catch (err) {
-      console.warn("[Translate]", err);
-      window.StoryReaderUI?.toast?.("Dịch lỗi: " + (err.message || err));
-      return false;
-    } finally {
-      isBusy = false;
-    }
-  }
-
-  function clearTranslateWanted() {
-    translateWanted = false;
-    showingOriginal = true;
-    try {
-      sessionStorage.removeItem("sr-translate-wanted");
-    } catch (e) {}
-    stopAutoTranslateObserver();
-  }
-
-  function restoreOriginal() {
-    translatedEls.forEach(function (el) {
-      if (originalMap.has(el)) {
-        try {
-          el.innerHTML = originalMap.get(el);
-        } catch (e) {}
       }
-    });
-    clearTranslateWanted();
-    // Dừng TTS đang đọc bản dịch + xóa hàng đợi cũ
-    try {
-      window.StoryTTS?.stop?.();
-    } catch (e) {}
-    window.StoryReaderUI?.toast?.("Đã hiện bản gốc (tắt tự dịch)", 2500);
-  }
 
-  async function showTranslated() {
-    // Dịch lại từ bản gốc đã lưu
-    translatedEls.forEach(function (el) {
-      if (originalMap.has(el)) {
+      function clearTranslateWanted() {
+        translateWanted = false;
+        showingOriginal = true;
         try {
-          el.innerHTML = originalMap.get(el);
-        } catch (e) {}
+          sessionStorage.removeItem("sr-translate-wanted");
+        } catch (e) { }
+        stopAutoTranslateObserver();
       }
-    });
-    showingOriginal = false;
-    return translatePage(localStorage.getItem("sr-target-lang") || "vi");
-  }
 
-  function toggleOriginal() {
-    if (!translatedEls.length) {
-      window.StoryReaderUI?.toast?.("Chưa dịch trang nào");
-      return;
-    }
-    if (showingOriginal) showTranslated();
-    else restoreOriginal();
-  }
+      function restoreOriginal() {
+        translatedEls.forEach(function(el) {
+          if (originalMap.has(el)) {
+            try {
+              el.innerHTML = originalMap.get(el);
+            } catch (e) { }
+          }
+        });
+        clearTranslateWanted();
+        // Dừng TTS đang đọc bản dịch + xóa hàng đợi cũ
+        try {
+          window.StoryTTS?.stop?.();
+        } catch (e) { }
+        window.StoryReaderUI?.toast?.("Đã hiện bản gốc (tắt tự dịch)", 2500);
+      }
 
-  function isTranslated() {
-    return translatedEls.length > 0 && !showingOriginal;
-  }
-  function isTranslateWanted() {
-    try {
-      return translateWanted || sessionStorage.getItem("sr-translate-wanted") === "1";
-    } catch (e) {
-      return translateWanted;
-    }
-  }
+      async function showTranslated() {
+        // Dịch lại từ bản gốc đã lưu
+        translatedEls.forEach(function(el) {
+          if (originalMap.has(el)) {
+            try {
+              el.innerHTML = originalMap.get(el);
+            } catch (e) { }
+          }
+        });
+        showingOriginal = false;
+        return translatePage(localStorage.getItem("sr-target-lang") || "vi");
+      }
 
-  /**
-   * Đang nghe TTS hoặc auto-scroll → dịch nền im lặng (không toast "Đang dịch").
-   */
-  function isContinuousSession() {
-    try {
-      if (window.StoryTTS?.isSpeaking?.() || window.StoryTTS?.isPlaying?.()) return true;
-      if (window.StoryTTS?.autoScrollEnabled) return true;
-      if (window.StoryTTS?.isSessionActive?.()) return true;
-    } catch (e) {}
-    return false;
-  }
-
-  function distToBottom() {
-    var h = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
-    var y = window.scrollY + window.innerHeight;
-    return Math.max(0, h - y);
-  }
-
-  /**
-   * Cuộn ngầm gần đáy để site infinite load thêm chapter (webnovel…).
-   * Đánh dấu programmatic để không pause auto-scroll.
-   */
-  function nudgeLoadMore() {
-    return new Promise(function (resolve) {
-      var before = document.documentElement.scrollHeight;
-      try {
-        window.__srTranslateNudge = true;
-        if (window.StoryTTS) {
-          try {
-            // tránh pauseAutoScroll coi là user
-            window.StoryTTS.isProgrammaticScroll && window.StoryTTS.isProgrammaticScroll();
-          } catch (e0) {}
-        }
-        // hích xuống — site infinite thường load khi gần đáy
-        window.scrollBy(0, Math.min(400, Math.max(120, distToBottom() + 80)));
-      } catch (e1) {}
-      var checks = 0;
-      var wait = function () {
-        checks++;
-        var now = document.documentElement.scrollHeight;
-        if (now > before + 60 || checks >= 8) {
-          setTimeout(function () {
-            window.__srTranslateNudge = false;
-          }, 300);
-          resolve(now > before + 60);
+      function toggleOriginal() {
+        if (!translatedEls.length) {
+          window.StoryReaderUI?.toast?.("Chưa dịch trang nào");
           return;
         }
-        setTimeout(wait, 200);
-      };
-      setTimeout(wait, 250);
-    });
-  }
-
-  /**
-   * Dịch các khối mới (chapter load thêm).
-   * @param {object} [opts]
-   * @param {boolean} [opts.silent] — ẩn toast (mặc định true nếu đang nghe/cuộn)
-   * @param {boolean} [opts.prefetch] — gần đáy thì nudge load trước
-   */
-  function translateNewBlocksOnly(opts) {
-    opts = opts || {};
-    if (!isTranslateWanted()) return Promise.resolve(0);
-
-    var silent =
-      opts.silent === true ||
-      (opts.silent !== false && isContinuousSession());
-
-    var run = async function () {
-      // Prefetch: gần đáy → cuộn ngầm load → rồi dịch
-      if (opts.prefetch !== false && distToBottom() < 1400) {
-        try {
-          await nudgeLoadMore();
-          await sleep(200);
-        } catch (eN) {}
+        if (showingOriginal) showTranslated();
+        else restoreOriginal();
       }
 
-      var blocks = collectBlocks();
-      var fresh = blocks.filter(function (el) {
-        return !originalMap.has(el);
-      });
-      if (!fresh.length) return 0;
+      function isTranslated() {
+        return translatedEls.length > 0 && !showingOriginal;
+      }
+      function isTranslateWanted() {
+        try {
+          return translateWanted || sessionStorage.getItem("sr-translate-wanted") === "1";
+        } catch (e) {
+          return translateWanted;
+        }
+      }
 
-      if (isBusy) {
-        return new Promise(function (resolve) {
-          setTimeout(function () {
-            translateNewBlocksOnly({ silent: silent, prefetch: false }).then(resolve);
-          }, 900);
+      /**
+       * Đang nghe TTS hoặc auto-scroll → dịch nền im lặng (không toast "Đang dịch").
+       */
+      function isContinuousSession() {
+        try {
+          if (window.StoryTTS?.isSpeaking?.() || window.StoryTTS?.isPlaying?.()) return true;
+          if (window.StoryTTS?.autoScrollEnabled) return true;
+          if (window.StoryTTS?.isSessionActive?.()) return true;
+        } catch (e) { }
+        return false;
+      }
+
+      function distToBottom() {
+        var h = document.documentElement.scrollHeight || document.body.scrollHeight || 0;
+        var y = window.scrollY + window.innerHeight;
+        return Math.max(0, h - y);
+      }
+
+      /**
+       * Cuộn ngầm gần đáy để site infinite load thêm chapter (webnovel…).
+       * Đánh dấu programmatic để không pause auto-scroll.
+       */
+      function nudgeLoadMore() {
+        return new Promise(function(resolve) {
+          var before = document.documentElement.scrollHeight;
+          try {
+            window.__srTranslateNudge = true;
+            if (window.StoryTTS) {
+              try {
+                // tránh pauseAutoScroll coi là user
+                window.StoryTTS.isProgrammaticScroll && window.StoryTTS.isProgrammaticScroll();
+              } catch (e0) { }
+            }
+            // hích xuống — site infinite thường load khi gần đáy
+            window.scrollBy(0, Math.min(400, Math.max(120, distToBottom() + 80)));
+          } catch (e1) { }
+          var checks = 0;
+          var wait = function() {
+            checks++;
+            var now = document.documentElement.scrollHeight;
+            if (now > before + 60 || checks >= 8) {
+              setTimeout(function() {
+                window.__srTranslateNudge = false;
+              }, 300);
+              resolve(now > before + 60);
+              return;
+            }
+            setTimeout(wait, 200);
+          };
+          setTimeout(wait, 250);
         });
       }
 
-      isBusy = true;
-      try {
-        var targetLang = localStorage.getItem("sr-target-lang") || "vi";
-        var sample = fresh
-          .slice(0, 4)
-          .map(function (el) {
-            return el.innerText;
-          })
-          .join(" ");
-        var source = guessSourceLang(sample);
-        if (source === targetLang) source = source === "vi" ? "en" : source;
-        var langpair = source + "|" + targetLang;
-        var ok = 0;
-        console.log(
-          "[Translate] auto +" + fresh.length + " khối",
-          silent ? "(silent)" : ""
-        );
-        // Không toast "Đang dịch" khi continuous / silent
-        for (var i = 0; i < fresh.length; i++) {
-          var el = fresh[i];
-          var text = (el.innerText || "").trim();
-          if (text.length < 3) continue;
-          originalMap.set(el, el.innerHTML);
-          translatedEls.push(el);
-          try {
-            var out = await translateLong(text, langpair);
-            applyTranslationToEl(el, out);
-            ok++;
-          } catch (e) {
-            console.warn("[Translate] auto", e);
+      /**
+       * Dịch các khối mới (chapter load thêm).
+       * @param {object} [opts]
+       * @param {boolean} [opts.silent] — ẩn toast (mặc định true nếu đang nghe/cuộn)
+       * @param {boolean} [opts.prefetch] — gần đáy thì nudge load trước
+       */
+      function translateNewBlocksOnly(opts) {
+        opts = opts || {};
+        if (!isTranslateWanted()) return Promise.resolve(0);
+
+        var silent =
+          opts.silent === true ||
+          (opts.silent !== false && isContinuousSession());
+
+        var run = async function() {
+          // Prefetch: gần đáy → cuộn ngầm load → rồi dịch
+          if (opts.prefetch !== false && distToBottom() < 1400) {
+            try {
+              await nudgeLoadMore();
+              await sleep(200);
+            } catch (eN) { }
           }
-          await sleep(20);
-        }
-        // Toast ngắn chỉ khi user tự cuộn (không continuous)
-        if (ok && !silent) {
-          window.StoryReaderUI?.toast?.("✓ Tự dịch +" + ok + " đoạn", 1800);
-        }
-        // Đang nghe: nối hàng đợi TTS tại câu hiện tại (không nhảy theo cuộn)
-        if (ok) {
+
+          var blocks = collectBlocks();
+          var fresh = blocks.filter(function(el) {
+            return !originalMap.has(el);
+          });
+          if (!fresh.length) return 0;
+
+          if (isBusy) {
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                translateNewBlocksOnly({ silent: silent, prefetch: false }).then(resolve);
+              }, 900);
+            });
+          }
+
+          isBusy = true;
           try {
-            if (
-              window.StoryTTS &&
-              (window.StoryTTS.isSpeaking?.() ||
-                window.StoryTTS.isSessionActive?.() ||
-                window.StoryTTS.isPlaying?.())
-            ) {
-              await window.StoryTTS.extendQueueFromPage?.();
+            var targetLang = localStorage.getItem("sr-target-lang") || "vi";
+            var sample = fresh
+              .slice(0, 4)
+              .map(function(el) {
+                return el.innerText;
+              })
+              .join(" ");
+            var source = guessSourceLang(sample);
+            if (source === targetLang) source = source === "vi" ? "en" : source;
+            var langpair = source + "|" + targetLang;
+            var ok = 0;
+            console.log(
+              "[Translate] auto +" + fresh.length + " khối",
+              silent ? "(silent)" : ""
+            );
+            // Không toast "Đang dịch" khi continuous / silent
+            for (var i = 0; i < fresh.length; i++) {
+              var el = fresh[ i ];
+              var text = (el.innerText || "").trim();
+              if (text.length < 3) continue;
+              originalMap.set(el, el.innerHTML);
+              translatedEls.push(el);
+              try {
+                var out = await translateLong(text, langpair);
+                applyTranslationToEl(el, out);
+                ok++;
+              } catch (e) {
+                console.warn("[Translate] auto", e);
+              }
+              await sleep(20);
             }
-          } catch (eExt) {
-            console.warn("[Translate] extend TTS", eExt);
+            // Toast ngắn chỉ khi user tự cuộn (không continuous)
+            if (ok && !silent) {
+              window.StoryReaderUI?.toast?.("✓ Tự dịch +" + ok + " đoạn", 1800);
+            }
+            // Đang nghe: nối hàng đợi TTS tại câu hiện tại (không nhảy theo cuộn)
+            if (ok) {
+              try {
+                if (
+                  window.StoryTTS &&
+                  (window.StoryTTS.isSpeaking?.() ||
+                    window.StoryTTS.isSessionActive?.() ||
+                    window.StoryTTS.isPlaying?.())
+                ) {
+                  await window.StoryTTS.extendQueueFromPage?.();
+                }
+              } catch (eExt) {
+                console.warn("[Translate] extend TTS", eExt);
+              }
+            }
+            return ok;
+          } finally {
+            isBusy = false;
           }
+        };
+
+        return run();
+      }
+
+      function stopAutoTranslateObserver() {
+        if (autoObs) {
+          try {
+            autoObs.disconnect();
+          } catch (e) { }
+          autoObs = null;
         }
-        return ok;
-      } finally {
-        isBusy = false;
+        clearTimeout(observerTimer);
+        try {
+          clearInterval(window.__srTrPoll);
+        } catch (e) { }
+        try {
+          clearInterval(window.__srTrPrefetch);
+        } catch (e2) { }
       }
-    };
 
-    return run();
-  }
+      function startAutoTranslateObserver() {
+        if (autoObs) return;
+        autoObs = new MutationObserver(function() {
+          clearTimeout(observerTimer);
+          observerTimer = setTimeout(function() {
+            translateNewBlocksOnly({ silent: isContinuousSession(), prefetch: false });
+          }, 500);
+        });
+        try {
+          autoObs.observe(document.body, { childList: true, subtree: true });
+        } catch (e) { }
 
-  function stopAutoTranslateObserver() {
-    if (autoObs) {
-      try {
-        autoObs.disconnect();
-      } catch (e) {}
-      autoObs = null;
-    }
-    clearTimeout(observerTimer);
-    try {
-      clearInterval(window.__srTrPoll);
-    } catch (e) {}
-    try {
-      clearInterval(window.__srTrPrefetch);
-    } catch (e2) {}
-  }
+        var lastH = document.documentElement.scrollHeight;
+        var lastCha = 0;
+        try {
+          lastCha = document.querySelectorAll(".cha-words, .cha-content").length;
+        } catch (e0) { }
 
-  function startAutoTranslateObserver() {
-    if (autoObs) return;
-    autoObs = new MutationObserver(function () {
-      clearTimeout(observerTimer);
-      observerTimer = setTimeout(function () {
-        translateNewBlocksOnly({ silent: isContinuousSession(), prefetch: false });
-      }, 500);
-    });
-    try {
-      autoObs.observe(document.body, { childList: true, subtree: true });
-    } catch (e) {}
-
-    var lastH = document.documentElement.scrollHeight;
-    var lastCha = 0;
-    try {
-      lastCha = document.querySelectorAll(".cha-words, .cha-content").length;
-    } catch (e0) {}
-
-    clearInterval(window.__srTrPoll);
-    window.__srTrPoll = setInterval(function () {
-      if (!isTranslateWanted()) return;
-      var h = document.documentElement.scrollHeight;
-      var cha = 0;
-      try {
-        cha = document.querySelectorAll(".cha-words, .cha-content").length;
-      } catch (e1) {}
-      if (h > lastH + 80 || cha > lastCha) {
-        lastH = h;
-        lastCha = cha;
-        translateNewBlocksOnly({ silent: isContinuousSession(), prefetch: false });
-      }
-    }, 1000);
-
-    // Prefetch định kỳ khi gần đáy + đang nghe/cuộn (hoặc user gần đáy)
-    clearInterval(window.__srTrPrefetch);
-    window.__srTrPrefetch = setInterval(function () {
-      if (!isTranslateWanted() || isBusy) return;
-      var near = distToBottom() < 1600;
-      if (!near) return;
-      // Continuous: luôn prefetch; user thường: chỉ khi rất gần đáy
-      if (isContinuousSession() || distToBottom() < 1000) {
-        translateNewBlocksOnly({ silent: true, prefetch: true });
-      }
-    }, 1800);
-
-    if (!window.__srTrScrollBound) {
-      window.__srTrScrollBound = true;
-      window.addEventListener(
-        "scroll",
-        function () {
+        clearInterval(window.__srTrPoll);
+        window.__srTrPoll = setInterval(function() {
           if (!isTranslateWanted()) return;
-          // Nudge translate không kích hoạt lại (tránh vòng)
-          if (window.__srTranslateNudge) return;
-          clearTimeout(window.__srTrScrollT);
-          window.__srTrScrollT = setTimeout(function () {
-            if (distToBottom() < 1200) {
-              translateNewBlocksOnly({
-                silent: isContinuousSession(),
-                prefetch: true,
-              });
-            }
-          }, 350);
-        },
-        { passive: true }
-      );
-    }
-  }
+          var h = document.documentElement.scrollHeight;
+          var cha = 0;
+          try {
+            cha = document.querySelectorAll(".cha-words, .cha-content").length;
+          } catch (e1) { }
+          if (h > lastH + 80 || cha > lastCha) {
+            lastH = h;
+            lastCha = cha;
+            translateNewBlocksOnly({ silent: isContinuousSession(), prefetch: false });
+          }
+        }, 1000);
 
-  function abort() {
-    abortFlag = true;
-    isBusy = false;
-    window.StoryReaderUI?.toast?.("Đã dừng dịch", 2000);
-  }
+        // Prefetch định kỳ khi gần đáy + đang nghe/cuộn (hoặc user gần đáy)
+        clearInterval(window.__srTrPrefetch);
+        window.__srTrPrefetch = setInterval(function() {
+          if (!isTranslateWanted() || isBusy) return;
+          var near = distToBottom() < 1600;
+          if (!near) return;
+          // Continuous: luôn prefetch; user thường: chỉ khi rất gần đáy
+          if (isContinuousSession() || distToBottom() < 1000) {
+            translateNewBlocksOnly({ silent: true, prefetch: true });
+          }
+        }, 1800);
 
-  window.StoryTranslator = {
-    translatePage: translatePage,
-    restoreOriginal: restoreOriginal,
-    toggleOriginal: toggleOriginal,
-    isTranslated: isTranslated,
-    isTranslateWanted: isTranslateWanted,
-    startAutoTranslateObserver: startAutoTranslateObserver,
-    collectBlocks: collectBlocks,
-    translateNewBlocksOnly: translateNewBlocksOnly,
-    abort: abort,
-    clearTranslateWanted: clearTranslateWanted,
-  };
+        if (!window.__srTrScrollBound) {
+          window.__srTrScrollBound = true;
+          window.addEventListener(
+            "scroll",
+            function() {
+              if (!isTranslateWanted()) return;
+              // Nudge translate không kích hoạt lại (tránh vòng)
+              if (window.__srTranslateNudge) return;
+              clearTimeout(window.__srTrScrollT);
+              window.__srTrScrollT = setTimeout(function() {
+                if (distToBottom() < 1200) {
+                  translateNewBlocksOnly({
+                    silent: isContinuousSession(),
+                    prefetch: true,
+                  });
+                }
+              }, 350);
+            },
+            { passive: true }
+          );
+        }
+      }
 
-  // Giữ cờ qua next chương (user đã bấm Dịch và chưa xem bản gốc)
-  try {
-    if (sessionStorage.getItem("sr-translate-wanted") === "1") {
-      translateWanted = true;
-    }
-  } catch (e) {}
+      function abort() {
+        abortFlag = true;
+        isBusy = false;
+        window.StoryReaderUI?.toast?.("Đã dừng dịch", 2000);
+      }
 
-  console.log("[Story Reader] translator.js loaded — StoryTranslator ready");
-})();
+      window.StoryTranslator = {
+        translatePage: translatePage,
+        restoreOriginal: restoreOriginal,
+        toggleOriginal: toggleOriginal,
+        isTranslated: isTranslated,
+        isTranslateWanted: isTranslateWanted,
+        startAutoTranslateObserver: startAutoTranslateObserver,
+        collectBlocks: collectBlocks,
+        translateNewBlocksOnly: translateNewBlocksOnly,
+        abort: abort,
+        clearTranslateWanted: clearTranslateWanted,
+      };
+
+      // Giữ cờ qua next chương (user đã bấm Dịch và chưa xem bản gốc)
+      try {
+        if (sessionStorage.getItem("sr-translate-wanted") === "1") {
+          translateWanted = true;
+        }
+      } catch (e) { }
+
+      console.log("[Story Reader] translator.js loaded — StoryTranslator ready");
+    })();
 
   }
   if (!window.StoryImageTranslate) {
-/**
- * Dịch chữ truyện tranh — gắn overlay CỐ ĐỊNH trên từng ảnh (cuộn theo nội dung).
- *
- * Giống dịch truyện chữ: xử lý cả chương (mọi panel), chữ đè bubble, không dính viewport.
- *
- * Pipeline:
- *  1) Tìm img panel trong trang
- *  2) Lấy pixel: background fetch → canvas clone → capture vùng ảnh
- *  3) CV bubble + OCR (Gemini / OCR.space) + dịch
- *  4) position:absolute % trên parent ảnh
- *
- * localStorage: sr-gemini-key, sr-ocr-key, sr-target-lang
- */
-(function () {
-  "use strict";
+    /**
+     * Dịch chữ truyện tranh — gắn overlay CỐ ĐỊNH trên từng ảnh (cuộn theo nội dung).
+     *
+     * Giống dịch truyện chữ: xử lý cả chương (mọi panel), chữ đè bubble, không dính viewport.
+     *
+     * Pipeline:
+     *  1) Tìm img panel trong trang
+     *  2) Lấy pixel: background fetch → canvas clone → capture vùng ảnh
+     *  3) CV bubble + OCR (Gemini / OCR.space) + dịch
+     *  4) position:absolute % trên parent ảnh
+     *
+     * localStorage: sr-gemini-key, sr-ocr-key, sr-target-lang
+     */
+    (function() {
+      "use strict";
 
-  var overlays = [];
-  var ocrBackoffUntil = 0;
-  var processedImgs = new WeakSet();
+      var overlays = [];
+      var ocrBackoffUntil = 0;
+      var processedImgs = new WeakSet();
 
-  function clearOverlays() {
-    overlays.forEach(function (el) {
-      try {
-        el.remove();
-      } catch (e) {}
-    });
-    overlays = [];
-    processedImgs = new WeakSet();
-  }
-
-  function setExtUiVisible(vis) {
-    ["sr-bubble", "sr-menu", "sr-tts-panel", "sr-scroll-hud", "sr-toast"].forEach(
-      function (id) {
-        var el = document.getElementById(id);
-        if (el) el.style.visibility = vis ? "" : "hidden";
+      function clearOverlays() {
+        overlays.forEach(function(el) {
+          try {
+            el.remove();
+          } catch (e) { }
+        });
+        overlays = [];
+        processedImgs = new WeakSet();
       }
-    );
-  }
 
-  function runtimeOk() {
-    return !!(chrome && chrome.runtime && chrome.runtime.id);
-  }
-
-  function isMangaHost() {
-    var host = (location.hostname || "").toLowerCase();
-    return /kagane|nettruyen|truyenqq|truyentranh|mangadex|webtoon|asura|newtruyen|comick|manhwa|manhua|toonily|asurascans/.test(
-      host
-    );
-  }
-
-  function getGeminiKey() {
-    try {
-      return (localStorage.getItem("sr-gemini-key") || "").trim();
-    } catch (e) {
-      return "";
-    }
-  }
-
-  function getOcrKey() {
-    try {
-      return (localStorage.getItem("sr-ocr-key") || "").trim();
-    } catch (e) {
-      return "";
-    }
-  }
-
-  function targetLang() {
-    return localStorage.getItem("sr-target-lang") || "vi";
-  }
-
-  function sleep(ms) {
-    return new Promise(function (r) {
-      setTimeout(r, ms);
-    });
-  }
-
-  /** Bỏ dòng OCR là UI/ads trang manga */
-  function isJunkOcrLine(s) {
-    s = String(s || "").trim();
-    if (s.length < 2) return true;
-    if (/truyenqq|truyenccc|foxtruyen|nettruyen|webtoon|\.com|\.net|\.gg|truyencap/i.test(s))
-      return true;
-    if (/chapter\s*\d+|theo dõi|follow\s*up|server\s*\d+|báo lỗi|quảng cáo/i.test(s))
-      return true;
-    if (/cải kho|tốc độ|smooth read|read stor|comic code|update new/i.test(s))
-      return true;
-    if (/tủ sách|xinh xinh|đọc truyện miễn phí|cấp nhật chương/i.test(s)) return true;
-    if (/cinder.?s tea|tea time team/i.test(s)) return true;
-    if (/^[\d\W]+$/.test(s)) return true;
-    if (/0\/x1|from the\?/i.test(s)) return true;
-    if (/huge story|comic code|tu sacho|xinh xinh|star child|beautiful boys/i.test(s)) return true;
-    if (/damn it$|^name$|^fc$|^boys$/i.test(s)) return true;
-    return false;
-  }
-
-  function cleanOcrLines(raw) {
-    return String(raw || "")
-      .replace(/\r/g, "")
-      .split(/\n+/)
-      .map(function (l) {
-        return l.replace(/^[\d\-•\*]+\.?\s*/, "").trim();
-      })
-      .filter(function (l) {
-        return l.length > 1 && !isJunkOcrLine(l);
-      });
-  }
-
-  /** Có dấu tiếng Việt */
-  function looksVietnamese(s) {
-    return /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóọỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(
-      String(s || "")
-    );
-  }
-
-  /** Chủ yếu ASCII Latin → gần như tiếng Anh */
-  function looksEnglish(s) {
-    s = String(s || "").trim();
-    if (looksVietnamese(s)) return false;
-    var letters = (s.match(/[a-zA-Z]/g) || []).length;
-    return letters >= 4 && letters / Math.max(1, s.replace(/\s/g, "").length) > 0.55;
-  }
-
-
-
-
-  /** Ảnh panel truyện (bỏ icon/ads nhỏ) */
-  function collectPanelImages(root) {
-    root = root || document.body;
-    var list = [];
-    var seen = new Set();
-    var nodes = root.querySelectorAll(
-      ".page-chapter img, .chapter-content img, .reading-detail img, " +
-        "#chapter-content img, .viewer-img, img.lazy, img.lozad, " +
-        "img[data-src], img[data-original], article img, main img, .container img"
-    );
-    if (!nodes.length) nodes = root.querySelectorAll("img");
-    nodes.forEach(function (img) {
-      if (img.closest && img.closest("[id^='sr-']")) return;
-      if (processedImgs.has(img)) return;
-      var src =
-        img.currentSrc ||
-        img.src ||
-        img.getAttribute("data-src") ||
-        img.getAttribute("data-original") ||
-        img.getAttribute("data-url") ||
-        "";
-      if (!src || src.indexOf("data:") === 0) return;
-      if (/avatar|icon|logo|emoji|button|ads|banner|pixel/i.test(src)) return;
-      var w = Math.max(img.naturalWidth || 0, img.clientWidth || 0, img.width || 0);
-      var h = Math.max(img.naturalHeight || 0, img.clientHeight || 0, img.height || 0);
-      if (w && h && (w < 200 || h < 200)) return;
-      // banner ads thường rất ngang
-      if (w && h && w / h > 3.2) return;
-      if (/banner|ads|qc-|quangcao|logo/i.test(src)) return;
-      if (seen.has(src)) return;
-      seen.add(src);
-      list.push(img);
-    });
-    return list;
-  }
-
-  function ensureRelativeParent(img) {
-    var p = img.parentElement;
-    if (!p) return img;
-    var st = window.getComputedStyle(p);
-    if (st.position === "static") {
-      p.style.position = "relative";
-    }
-    // tránh overflow cắt chữ
-    if (st.overflow === "hidden") {
-      try {
-        p.style.overflow = "visible";
-      } catch (e) {}
-    }
-    return p;
-  }
-
-  /**
-   * Overlay % trên parent ảnh — cuộn theo trang, cố định với panel.
-   * box: tọa độ trên ảnh natural (hoặc canvas cùng tỉ lệ).
-   */
-  function placeOnImage(img, box, imgW, imgH, text, meta) {
-    text = (text || "").trim();
-    if (!text || !imgW || !imgH) return;
-    meta = meta || {};
-
-    // Wrap img để % bám đúng khung ảnh
-    var parent = img.parentElement;
-    if (!img.dataset.srOcrWrap) {
-      var wrap = document.createElement("div");
-      wrap.className = "sr-ocr-img-wrap";
-      wrap.style.cssText =
-        "position:relative;display:block;width:100%;line-height:0;max-width:100%";
-      if (img.parentNode) {
-        img.parentNode.insertBefore(wrap, img);
-        wrap.appendChild(img);
+      function setExtUiVisible(vis) {
+        [ "sr-bubble", "sr-menu", "sr-tts-panel", "sr-scroll-hud", "sr-toast" ].forEach(
+          function(id) {
+            var el = document.getElementById(id);
+            if (el) el.style.visibility = vis ? "" : "hidden";
+          }
+        );
       }
-      img.dataset.srOcrWrap = "1";
-      parent = wrap;
-    } else {
-      parent = img.closest(".sr-ocr-img-wrap") || ensureRelativeParent(img);
-    }
 
-    // box trên canvas crop; meta offset nếu chỉ thấy 1 phần ảnh
-    var ox = meta.offsetX || 0;
-    var oy = meta.offsetY || 0;
-    var vw = meta.visibleW || 1;
-    var vh = meta.visibleH || 1;
-    var left = (ox + (box.x / imgW) * vw) * 100;
-    var top = (oy + (box.y / imgH) * vh) * 100;
-    var width = (box.w / imgW) * vw * 100;
-    var height = (box.h / imgH) * vh * 100;
+      function runtimeOk() {
+        return !!(chrome && chrome.runtime && chrome.runtime.id);
+      }
 
-    // Font theo chiều cao bubble
-    var boxPxH = Math.max(20, (box.h / imgH) * (img.clientHeight || 400));
-    var fs = Math.max(10, Math.min(16, Math.round(boxPxH * 0.22)));
-    if (text.length > 40) fs = Math.max(10, fs - 1);
-    if (text.length > 80) fs = Math.max(9, fs - 1);
+      function isMangaHost() {
+        var host = (location.hostname || "").toLowerCase();
+        return /kagane|nettruyen|truyenqq|truyentranh|mangadex|webtoon|asura|newtruyen|comick|manhwa|manhua|toonily|asurascans/.test(
+          host
+        );
+      }
 
-    // Nới box một chút để che kín chữ gốc
-    var padX = 0.4;
-    var padY = 0.3;
-    left = Math.max(0, left - padX);
-    top = Math.max(0, top - padY);
-    width = Math.min(100 - left, width + padX * 2);
-    height = Math.min(100 - top, Math.max(height, height * 1.05) + padY * 2);
-
-    var el = document.createElement("div");
-    el.className = "sr-img-ocr-overlay sr-bubble-on-img";
-    el.textContent = text;
-    el.style.cssText = [
-      "position:absolute",
-      "left:" + left.toFixed(2) + "%",
-      "top:" + top.toFixed(2) + "%",
-      "width:" + Math.max(10, width).toFixed(2) + "%",
-      "height:" + Math.max(5, height).toFixed(2) + "%",
-      "display:flex",
-      "align-items:center",
-      "justify-content:center",
-      "text-align:center",
-      "z-index:60",
-      "background:#ffffff",
-      "color:#111",
-      "padding:4px 6px",
-      "font:" + fs + "px/" + (fs + 3) + "px system-ui,-apple-system,'Segoe UI',sans-serif",
-      "font-weight:600",
-      "border-radius:8px",
-      "border:1px solid rgba(0,0,0,0.08)",
-      "box-sizing:border-box",
-      "white-space:pre-wrap",
-      "overflow:hidden",
-      "pointer-events:auto",
-      "box-shadow:0 2px 8px rgba(0,0,0,0.15)",
-      "line-height:1.3",
-      "word-break:break-word",
-    ].join(";");
-    el.title = "Click ẩn";
-    el.addEventListener("click", function (e) {
-      e.stopPropagation();
-      el.remove();
-    });
-    parent.appendChild(el);
-    overlays.push(el);
-  }
-
-  function captureTab() {
-    return new Promise(function (resolve, reject) {
-      if (!runtimeOk()) return reject(new Error("context invalidated"));
-      chrome.runtime.sendMessage({ type: "CAPTURE_TAB" }, function (resp) {
-        if (chrome.runtime.lastError)
-          return reject(new Error(chrome.runtime.lastError.message));
-        if (resp && resp.ok && resp.dataUrl) resolve(resp.dataUrl);
-        else reject(new Error((resp && resp.error) || "capture fail"));
-      });
-    });
-  }
-
-  function fetchImageB64(url) {
-    return new Promise(function (resolve, reject) {
-      if (!runtimeOk()) return reject(new Error("context invalidated"));
-      chrome.runtime.sendMessage(
-        {
-          type: "FETCH_IMAGE_B64",
-          url: url,
-          referer: location.href,
-        },
-        function (resp) {
-          if (chrome.runtime.lastError)
-            return reject(new Error(chrome.runtime.lastError.message));
-          if (resp && resp.ok && resp.dataUrl) resolve(resp.dataUrl);
-          else reject(new Error((resp && resp.error) || "fetch img fail"));
+      function getGeminiKey() {
+        try {
+          return (localStorage.getItem("sr-gemini-key") || "").trim();
+        } catch (e) {
+          return "";
         }
-      );
-    });
-  }
+      }
 
-  function dataUrlToCanvas(dataUrl) {
-    return new Promise(function (resolve, reject) {
-      var im = new Image();
-      im.onload = function () {
-        var c = document.createElement("canvas");
-        c.width = im.naturalWidth || im.width;
-        c.height = im.naturalHeight || im.height;
-        c.getContext("2d").drawImage(im, 0, 0);
-        resolve(c);
-      };
-      im.onerror = function () {
-        reject(new Error("decode fail"));
-      };
-      im.src = dataUrl;
-    });
-  }
+      function getOcrKey() {
+        try {
+          return (localStorage.getItem("sr-ocr-key") || "").trim();
+        } catch (e) {
+          return "";
+        }
+      }
 
-  /** Chụp viewport rồi crop đúng vùng ảnh trên màn hình */
-  async function canvasFromVisibleImg(img) {
-    var rect = img.getBoundingClientRect();
-    if (rect.width < 30 || rect.height < 30) throw new Error("img not visible");
-    // Clip phần giao với viewport
-    var top = Math.max(0, rect.top);
-    var left = Math.max(0, rect.left);
-    var bottom = Math.min(window.innerHeight, rect.bottom);
-    var right = Math.min(window.innerWidth, rect.right);
-    var vw = right - left;
-    var vh = bottom - top;
-    if (vw < 40 || vh < 40) throw new Error("offscreen");
+      function targetLang() {
+        return localStorage.getItem("sr-target-lang") || "vi";
+      }
 
-    setExtUiVisible(false);
-    await sleep(100);
-    var shot = await captureTab();
-    setExtUiVisible(true);
-    var full = await dataUrlToCanvas(shot);
-    var dpr = full.width / Math.max(1, window.innerWidth);
-    // fallback dpr
-    if (!isFinite(dpr) || dpr < 0.5 || dpr > 4) dpr = window.devicePixelRatio || 1;
+      function sleep(ms) {
+        return new Promise(function(r) {
+          setTimeout(r, ms);
+        });
+      }
 
-    var sx = Math.max(0, Math.round(left * dpr));
-    var sy = Math.max(0, Math.round(top * dpr));
-    var sw = Math.min(full.width - sx, Math.round(vw * dpr));
-    var sh = Math.min(full.height - sy, Math.round(vh * dpr));
-    if (sw < 24 || sh < 24) throw new Error("crop tiny");
+      /** Bỏ dòng OCR là UI/ads trang manga */
+      function isJunkOcrLine(s) {
+        s = String(s || "").trim();
+        if (s.length < 2) return true;
+        if (/truyenqq|truyenccc|foxtruyen|nettruyen|webtoon|\.com|\.net|\.gg|truyencap/i.test(s))
+          return true;
+        if (/chapter\s*\d+|theo dõi|follow\s*up|server\s*\d+|báo lỗi|quảng cáo/i.test(s))
+          return true;
+        if (/cải kho|tốc độ|smooth read|read stor|comic code|update new/i.test(s))
+          return true;
+        if (/tủ sách|xinh xinh|đọc truyện miễn phí|cấp nhật chương/i.test(s)) return true;
+        if (/cinder.?s tea|tea time team/i.test(s)) return true;
+        if (/^[\d\W]+$/.test(s)) return true;
+        if (/0\/x1|from the\?/i.test(s)) return true;
+        if (/huge story|comic code|tu sacho|xinh xinh|star child|beautiful boys/i.test(s)) return true;
+        if (/damn it$|^name$|^fc$|^boys$/i.test(s)) return true;
+        return false;
+      }
 
-    var c = document.createElement("canvas");
-    c.width = sw;
-    c.height = sh;
-    c.getContext("2d").drawImage(full, sx, sy, sw, sh, 0, 0, sw, sh);
-    // Ghi offset trong ảnh hiển thị (khi chỉ crop phần visible)
-    c.__srOffsetX = (left - rect.left) / Math.max(1, rect.width);
-    c.__srOffsetY = (top - rect.top) / Math.max(1, rect.height);
-    c.__srVisibleW = vw / Math.max(1, rect.width);
-    c.__srVisibleH = vh / Math.max(1, rect.height);
-    return c;
-  }
+      function cleanOcrLines(raw) {
+        return String(raw || "")
+          .replace(/\r/g, "")
+          .split(/\n+/)
+          .map(function(l) {
+            return l.replace(/^[\d\-•\*]+\.?\s*/, "").trim();
+          })
+          .filter(function(l) {
+            return l.length > 1 && !isJunkOcrLine(l);
+          });
+      }
 
-  /**
-   * Lấy pixel panel KHÔNG cuộn trang (giống dịch truyện chữ).
-   * Thứ tự: bg fetch → decode img đã load → crop phần đang hiện trên màn hình.
-   * Ảnh ngoài viewport → throw "not visible" (caller bỏ qua / chờ user cuộn).
-   */
-  async function panelToCanvas(img) {
-    var src =
-      img.currentSrc ||
-      img.src ||
-      img.getAttribute("data-src") ||
-      img.getAttribute("data-original") ||
-      img.getAttribute("data-url") ||
-      "";
+      /** Có dấu tiếng Việt */
+      function looksVietnamese(s) {
+        return /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóọỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(
+          String(s || "")
+        );
+      }
 
-    // 1) Background fetch (CORS bypass) — không cần ảnh trong viewport
-    if (src && src.indexOf("data:") !== 0) {
-      try {
-        var r = await new Promise(function (resolve) {
-          if (!runtimeOk()) return resolve(null);
+      /** Chủ yếu ASCII Latin → gần như tiếng Anh */
+      function looksEnglish(s) {
+        s = String(s || "").trim();
+        if (looksVietnamese(s)) return false;
+        var letters = (s.match(/[a-zA-Z]/g) || []).length;
+        return letters >= 4 && letters / Math.max(1, s.replace(/\s/g, "").length) > 0.55;
+      }
+
+
+
+
+      /** Ảnh panel truyện (bỏ icon/ads nhỏ) */
+      function collectPanelImages(root) {
+        root = root || document.body;
+        var list = [];
+        var seen = new Set();
+        var nodes = root.querySelectorAll(
+          ".page-chapter img, .chapter-content img, .reading-detail img, " +
+          "#chapter-content img, .viewer-img, img.lazy, img.lozad, " +
+          "img[data-src], img[data-original], article img, main img, .container img"
+        );
+        if (!nodes.length) nodes = root.querySelectorAll("img");
+        nodes.forEach(function(img) {
+          if (img.closest && img.closest("[id^='sr-']")) return;
+          if (processedImgs.has(img)) return;
+          var src =
+            img.currentSrc ||
+            img.src ||
+            img.getAttribute("data-src") ||
+            img.getAttribute("data-original") ||
+            img.getAttribute("data-url") ||
+            "";
+          if (!src || src.indexOf("data:") === 0) return;
+          if (/avatar|icon|logo|emoji|button|ads|banner|pixel/i.test(src)) return;
+          var w = Math.max(img.naturalWidth || 0, img.clientWidth || 0, img.width || 0);
+          var h = Math.max(img.naturalHeight || 0, img.clientHeight || 0, img.height || 0);
+          if (w && h && (w < 200 || h < 200)) return;
+          // banner ads thường rất ngang
+          if (w && h && w / h > 3.2) return;
+          if (/banner|ads|qc-|quangcao|logo/i.test(src)) return;
+          if (seen.has(src)) return;
+          seen.add(src);
+          list.push(img);
+        });
+        return list;
+      }
+
+      function ensureRelativeParent(img) {
+        var p = img.parentElement;
+        if (!p) return img;
+        var st = window.getComputedStyle(p);
+        if (st.position === "static") {
+          p.style.position = "relative";
+        }
+        // tránh overflow cắt chữ
+        if (st.overflow === "hidden") {
+          try {
+            p.style.overflow = "visible";
+          } catch (e) { }
+        }
+        return p;
+      }
+
+      /**
+       * Overlay % trên parent ảnh — cuộn theo trang, cố định với panel.
+       * box: tọa độ trên ảnh natural (hoặc canvas cùng tỉ lệ).
+       */
+      function placeOnImage(img, box, imgW, imgH, text, meta) {
+        text = (text || "").trim();
+        if (!text || !imgW || !imgH) return;
+        meta = meta || {};
+
+        // Wrap img để % bám đúng khung ảnh
+        var parent = img.parentElement;
+        if (!img.dataset.srOcrWrap) {
+          var wrap = document.createElement("div");
+          wrap.className = "sr-ocr-img-wrap";
+          wrap.style.cssText =
+            "position:relative;display:block;width:100%;line-height:0;max-width:100%";
+          if (img.parentNode) {
+            img.parentNode.insertBefore(wrap, img);
+            wrap.appendChild(img);
+          }
+          img.dataset.srOcrWrap = "1";
+          parent = wrap;
+        } else {
+          parent = img.closest(".sr-ocr-img-wrap") || ensureRelativeParent(img);
+        }
+
+        // box trên canvas crop; meta offset nếu chỉ thấy 1 phần ảnh
+        var ox = meta.offsetX || 0;
+        var oy = meta.offsetY || 0;
+        var vw = meta.visibleW || 1;
+        var vh = meta.visibleH || 1;
+        var left = (ox + (box.x / imgW) * vw) * 100;
+        var top = (oy + (box.y / imgH) * vh) * 100;
+        var width = (box.w / imgW) * vw * 100;
+        var height = (box.h / imgH) * vh * 100;
+
+        // Font theo chiều cao bubble
+        var boxPxH = Math.max(20, (box.h / imgH) * (img.clientHeight || 400));
+        var fs = Math.max(10, Math.min(16, Math.round(boxPxH * 0.22)));
+        if (text.length > 40) fs = Math.max(10, fs - 1);
+        if (text.length > 80) fs = Math.max(9, fs - 1);
+
+        // Nới box một chút để che kín chữ gốc
+        var padX = 0.4;
+        var padY = 0.3;
+        left = Math.max(0, left - padX);
+        top = Math.max(0, top - padY);
+        width = Math.min(100 - left, width + padX * 2);
+        height = Math.min(100 - top, Math.max(height, height * 1.05) + padY * 2);
+
+        var el = document.createElement("div");
+        el.className = "sr-img-ocr-overlay sr-bubble-on-img";
+        el.textContent = text;
+        el.style.cssText = [
+          "position:absolute",
+          "left:" + left.toFixed(2) + "%",
+          "top:" + top.toFixed(2) + "%",
+          "width:" + Math.max(10, width).toFixed(2) + "%",
+          "height:" + Math.max(5, height).toFixed(2) + "%",
+          "display:flex",
+          "align-items:center",
+          "justify-content:center",
+          "text-align:center",
+          "z-index:60",
+          "background:#ffffff",
+          "color:#111",
+          "padding:4px 6px",
+          "font:" + fs + "px/" + (fs + 3) + "px system-ui,-apple-system,'Segoe UI',sans-serif",
+          "font-weight:600",
+          "border-radius:8px",
+          "border:1px solid rgba(0,0,0,0.08)",
+          "box-sizing:border-box",
+          "white-space:pre-wrap",
+          "overflow:hidden",
+          "pointer-events:auto",
+          "box-shadow:0 2px 8px rgba(0,0,0,0.15)",
+          "line-height:1.3",
+          "word-break:break-word",
+        ].join(";");
+        el.title = "Click ẩn";
+        el.addEventListener("click", function(e) {
+          e.stopPropagation();
+          el.remove();
+        });
+        parent.appendChild(el);
+        overlays.push(el);
+      }
+
+      function captureTab() {
+        return new Promise(function(resolve, reject) {
+          if (!runtimeOk()) return reject(new Error("context invalidated"));
+          chrome.runtime.sendMessage({ type: "CAPTURE_TAB" }, function(resp) {
+            if (chrome.runtime.lastError)
+              return reject(new Error(chrome.runtime.lastError.message));
+            if (resp && resp.ok && resp.dataUrl) resolve(resp.dataUrl);
+            else reject(new Error((resp && resp.error) || "capture fail"));
+          });
+        });
+      }
+
+      function fetchImageB64(url) {
+        return new Promise(function(resolve, reject) {
+          if (!runtimeOk()) return reject(new Error("context invalidated"));
           chrome.runtime.sendMessage(
-            { type: "FETCH_IMAGE_B64", url: src, referer: location.href },
-            function (resp) {
-              if (chrome.runtime.lastError) return resolve(null);
-              resolve(resp);
+            {
+              type: "FETCH_IMAGE_B64",
+              url: url,
+              referer: location.href,
+            },
+            function(resp) {
+              if (chrome.runtime.lastError)
+                return reject(new Error(chrome.runtime.lastError.message));
+              if (resp && resp.ok && resp.dataUrl) resolve(resp.dataUrl);
+              else reject(new Error((resp && resp.error) || "fetch img fail"));
             }
           );
         });
-        if (r && r.ok && r.dataUrl) {
-          var c1 = await dataUrlToCanvas(r.dataUrl);
-          if (c1 && c1.width > 40 && c1.height > 40) return c1;
-        }
-      } catch (eFetch) {
-        console.warn("[OCR] bg fetch", eFetch && eFetch.message ? eFetch.message : eFetch);
       }
-    }
 
-    // 2) Clone từ <img> đã decode (cùng origin / đã CORS)
-    try {
-      if (img.complete && (img.naturalWidth || 0) > 40) {
-        var c2 = document.createElement("canvas");
-        c2.width = img.naturalWidth;
-        c2.height = img.naturalHeight;
-        c2.getContext("2d").drawImage(img, 0, 0);
-        // Test tainted
-        try {
-          c2.getContext("2d").getImageData(0, 0, 1, 1);
-          return c2;
-        } catch (tainted) {}
+      function dataUrlToCanvas(dataUrl) {
+        return new Promise(function(resolve, reject) {
+          var im = new Image();
+          im.onload = function() {
+            var c = document.createElement("canvas");
+            c.width = im.naturalWidth || im.width;
+            c.height = im.naturalHeight || im.height;
+            c.getContext("2d").drawImage(im, 0, 0);
+            resolve(c);
+          };
+          im.onerror = function() {
+            reject(new Error("decode fail"));
+          };
+          im.src = dataUrl;
+        });
       }
-    } catch (eClone) {}
 
-    // 3) Chỉ crop phần đang hiện — KHÔNG scrollIntoView
-    var rect = img.getBoundingClientRect();
-    var visH =
-      Math.min(window.innerHeight, rect.bottom) - Math.max(0, rect.top);
-    var visW =
-      Math.min(window.innerWidth, rect.right) - Math.max(0, rect.left);
-    if (visH < 60 || visW < 60) {
-      throw new Error("not visible");
-    }
-    try {
-      var c3 = await canvasFromVisibleImg(img);
-      if (c3 && c3.width > 40) return c3;
-    } catch (eCap) {
-      console.warn("[OCR] capture", eCap && eCap.message ? eCap.message : eCap);
-    }
+      /** Chụp viewport rồi crop đúng vùng ảnh trên màn hình */
+      async function canvasFromVisibleImg(img) {
+        var rect = img.getBoundingClientRect();
+        if (rect.width < 30 || rect.height < 30) throw new Error("img not visible");
+        // Clip phần giao với viewport
+        var top = Math.max(0, rect.top);
+        var left = Math.max(0, rect.left);
+        var bottom = Math.min(window.innerHeight, rect.bottom);
+        var right = Math.min(window.innerWidth, rect.right);
+        var vw = right - left;
+        var vh = bottom - top;
+        if (vw < 40 || vh < 40) throw new Error("offscreen");
 
-    throw new Error("cannot read panel");
-  }
+        setExtUiVisible(false);
+        await sleep(100);
+        var shot = await captureTab();
+        setExtUiVisible(true);
+        var full = await dataUrlToCanvas(shot);
+        var dpr = full.width / Math.max(1, window.innerWidth);
+        // fallback dpr
+        if (!isFinite(dpr) || dpr < 0.5 || dpr > 4) dpr = window.devicePixelRatio || 1;
 
-  function detectBubbles(canvas) {
-    var maxW = 900;
-    var scale = Math.min(1, maxW / canvas.width);
-    var sw = Math.max(1, Math.round(canvas.width * scale));
-    var sh = Math.max(1, Math.round(canvas.height * scale));
-    var small = document.createElement("canvas");
-    small.width = sw;
-    small.height = sh;
-    var sctx = small.getContext("2d");
-    sctx.drawImage(canvas, 0, 0, sw, sh);
-    var data = sctx.getImageData(0, 0, sw, sh).data;
-    var n = sw * sh;
-    var mask = new Uint8Array(n);
-    for (var i = 0; i < n; i++) {
-      var o = i * 4;
-      var g = (data[o] * 0.299 + data[o + 1] * 0.587 + data[o + 2] * 0.114) | 0;
-      mask[i] = g >= 198 ? 1 : 0;
-    }
-    var mask2 = new Uint8Array(n);
-    for (var y = 1; y < sh - 1; y++) {
-      for (var x = 1; x < sw - 1; x++) {
-        var p = y * sw + x;
-        if (mask[p] && mask[p - 1] && mask[p + 1] && mask[p - sw] && mask[p + sw])
-          mask2[p] = 1;
+        var sx = Math.max(0, Math.round(left * dpr));
+        var sy = Math.max(0, Math.round(top * dpr));
+        var sw = Math.min(full.width - sx, Math.round(vw * dpr));
+        var sh = Math.min(full.height - sy, Math.round(vh * dpr));
+        if (sw < 24 || sh < 24) throw new Error("crop tiny");
+
+        var c = document.createElement("canvas");
+        c.width = sw;
+        c.height = sh;
+        c.getContext("2d").drawImage(full, sx, sy, sw, sh, 0, 0, sw, sh);
+        // Ghi offset trong ảnh hiển thị (khi chỉ crop phần visible)
+        c.__srOffsetX = (left - rect.left) / Math.max(1, rect.width);
+        c.__srOffsetY = (top - rect.top) / Math.max(1, rect.height);
+        c.__srVisibleW = vw / Math.max(1, rect.width);
+        c.__srVisibleH = vh / Math.max(1, rect.height);
+        return c;
       }
-    }
-    mask = mask2;
-    var visited = new Uint8Array(n);
-    var boxes = [];
-    var minArea = Math.max(350, (sw * sh) / 130);
-    var maxArea = sw * sh * 0.4;
-    for (var i = 0; i < n; i++) {
-      if (!mask[i] || visited[i]) continue;
-      var qx = [i % sw];
-      var qy = [(i / sw) | 0];
-      visited[i] = 1;
-      var qi = 0;
-      var minX = qx[0],
-        maxX = qx[0],
-        minY = qy[0],
-        maxY = qy[0],
-        area = 0;
-      while (qi < qx.length) {
-        var cx = qx[qi];
-        var cy = qy[qi];
-        qi++;
-        area++;
-        if (cx < minX) minX = cx;
-        if (cx > maxX) maxX = cx;
-        if (cy < minY) minY = cy;
-        if (cy > maxY) maxY = cy;
-        var dirs = [
-          [cx - 1, cy],
-          [cx + 1, cy],
-          [cx, cy - 1],
-          [cx, cy + 1],
-        ];
-        for (var k = 0; k < 4; k++) {
-          var nx = dirs[k][0];
-          var ny = dirs[k][1];
-          if (nx < 0 || ny < 0 || nx >= sw || ny >= sh) continue;
-          var ni = ny * sw + nx;
-          if (!mask[ni] || visited[ni]) continue;
-          visited[ni] = 1;
-          qx.push(nx);
-          qy.push(ny);
-        }
-      }
-      if (area < minArea || area > maxArea) continue;
-      var bw = maxX - minX + 1;
-      var bh = maxY - minY + 1;
-      if (bw < 18 || bh < 12) continue;
-      var aspect = bw / bh;
-      if (aspect > 8 || aspect < 0.14) continue;
-      if (area / (bw * bh) < 0.2) continue;
-      var inv = 1 / scale;
-      var pad = 4 * inv;
-      boxes.push({
-        x: Math.max(0, minX * inv - pad) | 0,
-        y: Math.max(0, minY * inv - pad) | 0,
-        w:
-          (Math.min(canvas.width, (maxX + 1) * inv + pad) -
-            Math.max(0, minX * inv - pad)) |
-          0,
-        h:
-          (Math.min(canvas.height, (maxY + 1) * inv + pad) -
-            Math.max(0, minY * inv - pad)) |
-          0,
-      });
-    }
-    boxes.sort(function (a, b) {
-      return a.y - b.y || a.x - b.x;
-    });
-    if (boxes.length > 8) boxes = boxes.slice(0, 8);
-    return boxes;
-  }
 
-  function cropToDataUrl(canvas, box) {
-    var w = Math.max(1, box.w);
-    var h = Math.max(1, box.h);
-    var scale = w < 160 ? 2.2 : w < 320 ? 1.4 : w > 600 ? 600 / w : 1;
-    var c = document.createElement("canvas");
-    c.width = Math.max(1, Math.round(w * scale));
-    c.height = Math.max(1, Math.round(h * scale));
-    var ctx = c.getContext("2d");
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, c.width, c.height);
-    ctx.drawImage(canvas, box.x, box.y, w, h, 0, 0, c.width, c.height);
-    var q = 0.88;
-    var out = c.toDataURL("image/jpeg", q);
-    while (out.length > 300000 && q > 0.5) {
-      q -= 0.08;
-      out = c.toDataURL("image/jpeg", q);
-    }
-    return out;
-  }
+      /**
+       * Lấy pixel panel KHÔNG cuộn trang (giống dịch truyện chữ).
+       * Thứ tự: bg fetch → decode img đã load → crop phần đang hiện trên màn hình.
+       * Ảnh ngoài viewport → throw "not visible" (caller bỏ qua / chờ user cuộn).
+       */
+      async function panelToCanvas(img) {
+        var src =
+          img.currentSrc ||
+          img.src ||
+          img.getAttribute("data-src") ||
+          img.getAttribute("data-original") ||
+          img.getAttribute("data-url") ||
+          "";
 
-  function shrinkCanvas(canvas, maxW) {
-    maxW = maxW || 1100;
-    if (canvas.width <= maxW) {
-      return canvas.toDataURL("image/jpeg", 0.86);
-    }
-    var s = maxW / canvas.width;
-    var c = document.createElement("canvas");
-    c.width = maxW;
-    c.height = Math.round(canvas.height * s);
-    c.getContext("2d").drawImage(canvas, 0, 0, c.width, c.height);
-    return c.toDataURL("image/jpeg", 0.86);
-  }
-
-  function ocrGemini(dataUrl, tl) {
-    return new Promise(function (resolve, reject) {
-      if (!runtimeOk()) return reject(new Error("context invalidated"));
-      var key = getGeminiKey();
-      if (!key) return reject(new Error("no gemini key"));
-      chrome.runtime.sendMessage(
-        { type: "OCR_GEMINI", dataUrl: dataUrl, apiKey: key, targetLang: tl },
-        function (resp) {
-          if (chrome.runtime.lastError)
-            return reject(new Error(chrome.runtime.lastError.message));
-          if (resp && resp.ok) resolve(resp.text || "");
-          else reject(new Error((resp && resp.error) || "gemini fail"));
-        }
-      );
-    });
-  }
-
-  /** Ngôn ngữ OCR.space theo host / target */
-  function ocrLangs() {
-    var host = (location.hostname || "").toLowerCase();
-    var tl = (targetLang() || "vi").toLowerCase();
-    // Trang VN: ưu tiên vie rồi eng
-    if (/nettruyen|truyenqq|truyentranh|nguontruyen|blogtruyen|truyenfull/.test(host) || tl === "vi" || tl === "vie") {
-      return ["vie", "eng"];
-    }
-    if (tl === "ja" || tl === "jpn") return ["jpn", "eng"];
-    if (tl === "ko" || tl === "kor") return ["kor", "eng"];
-    if (tl === "zh" || tl === "zh-CN" || tl === "chs") return ["chs", "eng"];
-    return ["eng", "vie"];
-  }
-
-  function ocrSpaceOnce(dataUrl, lang) {
-    return new Promise(function (resolve, reject) {
-      if (!runtimeOk()) return reject(new Error("context invalidated"));
-      if (Date.now() < ocrBackoffUntil)
-        return reject(new Error("OCR rate-limit"));
-      chrome.runtime.sendMessage(
-        {
-          type: "OCR_SPACE",
-          dataUrl: dataUrl,
-          lang: lang || "eng",
-          apiKey: getOcrKey(),
-        },
-        function (resp) {
-          if (chrome.runtime.lastError)
-            return reject(new Error(chrome.runtime.lastError.message));
-          if (resp && resp.ok) resolve(resp.text || "");
-          else {
-            var err = (resp && resp.error) || "ocr fail";
-            if (/429|503/.test(String(err))) ocrBackoffUntil = Date.now() + 120000;
-            reject(new Error(err));
+        // 1) Background fetch (CORS bypass) — không cần ảnh trong viewport
+        if (src && src.indexOf("data:") !== 0) {
+          try {
+            var r = await new Promise(function(resolve) {
+              if (!runtimeOk()) return resolve(null);
+              chrome.runtime.sendMessage(
+                { type: "FETCH_IMAGE_B64", url: src, referer: location.href },
+                function(resp) {
+                  if (chrome.runtime.lastError) return resolve(null);
+                  resolve(resp);
+                }
+              );
+            });
+            if (r && r.ok && r.dataUrl) {
+              var c1 = await dataUrlToCanvas(r.dataUrl);
+              if (c1 && c1.width > 40 && c1.height > 40) return c1;
+            }
+          } catch (eFetch) {
+            console.warn("[OCR] bg fetch", eFetch && eFetch.message ? eFetch.message : eFetch);
           }
         }
-      );
-    });
-  }
 
-  /**
-   * Free OCR.space: CHỈ 1 ngôn ngữ / 1 request (tránh 429).
-   * Có OCR key riêng hoặc Gemini → có thể thử fallback.
-   */
-  async function ocrSpace(dataUrl) {
-    var langs = ocrLangs();
-    var hasOwnKey = !!(getOcrKey() && getOcrKey() !== "helloworld");
-    // Free helloworld: chỉ lang đầu tiên
-    if (!hasOwnKey) langs = langs.slice(0, 1);
-    var lastErr = "";
-    for (var i = 0; i < langs.length; i++) {
-      try {
-        var text = await ocrSpaceOnce(dataUrl, langs[i]);
-        if (text && String(text).trim().length > 1) {
-          console.log("[OCR] ocr.space lang=" + langs[i], String(text).slice(0, 80));
-          return text;
+        // 2) Clone từ <img> đã decode (cùng origin / đã CORS)
+        try {
+          if (img.complete && (img.naturalWidth || 0) > 40) {
+            var c2 = document.createElement("canvas");
+            c2.width = img.naturalWidth;
+            c2.height = img.naturalHeight;
+            c2.getContext("2d").drawImage(img, 0, 0);
+            // Test tainted
+            try {
+              c2.getContext("2d").getImageData(0, 0, 1, 1);
+              return c2;
+            } catch (tainted) { }
+          }
+        } catch (eClone) { }
+
+        // 3) Chỉ crop phần đang hiện — KHÔNG scrollIntoView
+        var rect = img.getBoundingClientRect();
+        var visH =
+          Math.min(window.innerHeight, rect.bottom) - Math.max(0, rect.top);
+        var visW =
+          Math.min(window.innerWidth, rect.right) - Math.max(0, rect.left);
+        if (visH < 60 || visW < 60) {
+          throw new Error("not visible");
         }
-      } catch (e) {
-        lastErr = String(e && e.message ? e.message : e);
-        if (/rate-limit|429/.test(lastErr)) throw e;
-      }
-    }
-    if (lastErr) throw new Error(lastErr);
-    return "";
-  }
+        try {
+          var c3 = await canvasFromVisibleImg(img);
+          if (c3 && c3.width > 40) return c3;
+        } catch (eCap) {
+          console.warn("[OCR] capture", eCap && eCap.message ? eCap.message : eCap);
+        }
 
-  /**
-   * Dịch thông minh:
-   * - Nếu OCR đã đúng ngôn ngữ đích → giữ nguyên (tránh vi→en khi target=vi)
-   * - langpair cố định sl|tl (không dùng auto)
-   */
-  function translateText(text, tl) {
-    tl = (tl || targetLang() || "vi").toLowerCase();
-    return new Promise(function (resolve) {
-      text = String(text || "").trim();
-      if (!text) return resolve("");
-      if (!runtimeOk()) return resolve(text);
-
-      // Đã là tiếng Việt mà đích là vi → không dịch lại
-      if ((tl === "vi" || tl === "vie") && looksVietnamese(text)) {
-        return resolve(text);
-      }
-      // Đã Latin/Anh mà đích en → giữ
-      if ((tl === "en" || tl === "eng") && looksEnglish(text) && !looksVietnamese(text)) {
-        return resolve(text);
+        throw new Error("cannot read panel");
       }
 
-      var sl = "auto";
-      if (looksVietnamese(text)) sl = "vi";
-      else if (looksEnglish(text)) sl = "en";
-      if (sl === tl || (sl === "vi" && tl === "vie") || (sl === "en" && tl === "eng")) {
-        return resolve(text);
-      }
-
-      chrome.runtime.sendMessage(
-        {
-          type: "MYMEMORY_TRANSLATE",
-          text: text.slice(0, 900),
-          langpair: sl + "|" + tl,
-        },
-        function (resp) {
-          if (chrome.runtime.lastError) return resolve(text);
-          if (resp && resp.ok && resp.translatedText) {
-            var out = String(resp.translatedText).trim();
-            // GTX đôi khi trả lại bản gốc / rác — ưu tiên bản có nghĩa
-            if (!out || out === text) return resolve(text);
-            // Nếu target vi nhưng ra toàn English & gốc có tiếng Việt → giữ gốc
-            if (
-              (tl === "vi" || tl === "vie") &&
-              looksVietnamese(text) &&
-              !looksVietnamese(out) &&
-              looksEnglish(out)
-            ) {
-              return resolve(text);
+      function detectBubbles(canvas) {
+        var maxW = 900;
+        var scale = Math.min(1, maxW / canvas.width);
+        var sw = Math.max(1, Math.round(canvas.width * scale));
+        var sh = Math.max(1, Math.round(canvas.height * scale));
+        var small = document.createElement("canvas");
+        small.width = sw;
+        small.height = sh;
+        var sctx = small.getContext("2d");
+        sctx.drawImage(canvas, 0, 0, sw, sh);
+        var data = sctx.getImageData(0, 0, sw, sh).data;
+        var n = sw * sh;
+        var mask = new Uint8Array(n);
+        for (var i = 0; i < n; i++) {
+          var o = i * 4;
+          var g = (data[ o ] * 0.299 + data[ o + 1 ] * 0.587 + data[ o + 2 ] * 0.114) | 0;
+          mask[ i ] = g >= 198 ? 1 : 0;
+        }
+        var mask2 = new Uint8Array(n);
+        for (var y = 1; y < sh - 1; y++) {
+          for (var x = 1; x < sw - 1; x++) {
+            var p = y * sw + x;
+            if (mask[ p ] && mask[ p - 1 ] && mask[ p + 1 ] && mask[ p - sw ] && mask[ p + sw ])
+              mask2[ p ] = 1;
+          }
+        }
+        mask = mask2;
+        var visited = new Uint8Array(n);
+        var boxes = [];
+        var minArea = Math.max(350, (sw * sh) / 130);
+        var maxArea = sw * sh * 0.4;
+        for (var i = 0; i < n; i++) {
+          if (!mask[ i ] || visited[ i ]) continue;
+          var qx = [ i % sw ];
+          var qy = [ (i / sw) | 0 ];
+          visited[ i ] = 1;
+          var qi = 0;
+          var minX = qx[ 0 ],
+            maxX = qx[ 0 ],
+            minY = qy[ 0 ],
+            maxY = qy[ 0 ],
+            area = 0;
+          while (qi < qx.length) {
+            var cx = qx[ qi ];
+            var cy = qy[ qi ];
+            qi++;
+            area++;
+            if (cx < minX) minX = cx;
+            if (cx > maxX) maxX = cx;
+            if (cy < minY) minY = cy;
+            if (cy > maxY) maxY = cy;
+            var dirs = [
+              [ cx - 1, cy ],
+              [ cx + 1, cy ],
+              [ cx, cy - 1 ],
+              [ cx, cy + 1 ],
+            ];
+            for (var k = 0; k < 4; k++) {
+              var nx = dirs[ k ][ 0 ];
+              var ny = dirs[ k ][ 1 ];
+              if (nx < 0 || ny < 0 || nx >= sw || ny >= sh) continue;
+              var ni = ny * sw + nx;
+              if (!mask[ ni ] || visited[ ni ]) continue;
+              visited[ ni ] = 1;
+              qx.push(nx);
+              qy.push(ny);
             }
-            resolve(out);
-          } else resolve(text);
+          }
+          if (area < minArea || area > maxArea) continue;
+          var bw = maxX - minX + 1;
+          var bh = maxY - minY + 1;
+          if (bw < 18 || bh < 12) continue;
+          var aspect = bw / bh;
+          if (aspect > 8 || aspect < 0.14) continue;
+          if (area / (bw * bh) < 0.2) continue;
+          var inv = 1 / scale;
+          var pad = 4 * inv;
+          boxes.push({
+            x: Math.max(0, minX * inv - pad) | 0,
+            y: Math.max(0, minY * inv - pad) | 0,
+            w:
+              (Math.min(canvas.width, (maxX + 1) * inv + pad) -
+                Math.max(0, minX * inv - pad)) |
+              0,
+            h:
+              (Math.min(canvas.height, (maxY + 1) * inv + pad) -
+                Math.max(0, minY * inv - pad)) |
+              0,
+          });
         }
-      );
-    });
-  }
+        boxes.sort(function(a, b) {
+          return a.y - b.y || a.x - b.x;
+        });
+        if (boxes.length > 8) boxes = boxes.slice(0, 8);
+        return boxes;
+      }
 
-  async function processPanel(img, tl, silent) {
-    var canvas = await panelToCanvas(img);
-    var boxes = detectBubbles(canvas);
-    console.log("[OCR] panel bubbles", boxes.length, canvas.width + "x" + canvas.height);
+      function cropToDataUrl(canvas, box) {
+        var w = Math.max(1, box.w);
+        var h = Math.max(1, box.h);
+        var scale = w < 160 ? 2.2 : w < 320 ? 1.4 : w > 600 ? 600 / w : 1;
+        var c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(w * scale));
+        c.height = Math.max(1, Math.round(h * scale));
+        var ctx = c.getContext("2d");
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(canvas, box.x, box.y, w, h, 0, 0, c.width, c.height);
+        var q = 0.88;
+        var out = c.toDataURL("image/jpeg", q);
+        while (out.length > 300000 && q > 0.5) {
+          q -= 0.08;
+          out = c.toDataURL("image/jpeg", q);
+        }
+        return out;
+      }
 
-    var meta = {
-      offsetX: canvas.__srOffsetX || 0,
-      offsetY: canvas.__srOffsetY || 0,
-      visibleW: canvas.__srVisibleW || 1,
-      visibleH: canvas.__srVisibleH || 1,
-    };
-    var placed = 0;
-    var geminiKey = getGeminiKey();
+      function shrinkCanvas(canvas, maxW) {
+        maxW = maxW || 1100;
+        if (canvas.width <= maxW) {
+          return canvas.toDataURL("image/jpeg", 0.86);
+        }
+        var s = maxW / canvas.width;
+        var c = document.createElement("canvas");
+        c.width = maxW;
+        c.height = Math.round(canvas.height * s);
+        c.getContext("2d").drawImage(canvas, 0, 0, c.width, c.height);
+        return c.toDataURL("image/jpeg", 0.86);
+      }
 
-    // --- Gemini: 1 request / panel ---
-    if (geminiKey) {
-      try {
-        var small = shrinkCanvas(canvas, 1000);
-        var ai = (await ocrGemini(small, tl)).replace(/\r/g, "").trim();
-        ai = ai.replace(/^```[\s\S]*?\n/, "").replace(/```$/, "").trim();
-        var gLines = cleanOcrLines(ai);
-        console.log("[OCR] gemini lines", gLines.length);
-        if (gLines.length) {
+      function ocrGemini(dataUrl, tl) {
+        return new Promise(function(resolve, reject) {
+          if (!runtimeOk()) return reject(new Error("context invalidated"));
+          var key = getGeminiKey();
+          if (!key) return reject(new Error("no gemini key"));
+          chrome.runtime.sendMessage(
+            { type: "OCR_GEMINI", dataUrl: dataUrl, apiKey: key, targetLang: tl },
+            function(resp) {
+              if (chrome.runtime.lastError)
+                return reject(new Error(chrome.runtime.lastError.message));
+              if (resp && resp.ok) resolve(resp.text || "");
+              else reject(new Error((resp && resp.error) || "gemini fail"));
+            }
+          );
+        });
+      }
+
+      /** Ngôn ngữ OCR.space theo host / target */
+      function ocrLangs() {
+        var host = (location.hostname || "").toLowerCase();
+        var tl = (targetLang() || "vi").toLowerCase();
+        // Trang VN: ưu tiên vie rồi eng
+        if (/nettruyen|truyenqq|truyentranh|nguontruyen|blogtruyen|truyenfull/.test(host) || tl === "vi" || tl === "vie") {
+          return [ "vie", "eng" ];
+        }
+        if (tl === "ja" || tl === "jpn") return [ "jpn", "eng" ];
+        if (tl === "ko" || tl === "kor") return [ "kor", "eng" ];
+        if (tl === "zh" || tl === "zh-CN" || tl === "chs") return [ "chs", "eng" ];
+        return [ "eng", "vie" ];
+      }
+
+      function ocrSpaceOnce(dataUrl, lang) {
+        return new Promise(function(resolve, reject) {
+          if (!runtimeOk()) return reject(new Error("context invalidated"));
+          if (Date.now() < ocrBackoffUntil)
+            return reject(new Error("OCR rate-limit"));
+          chrome.runtime.sendMessage(
+            {
+              type: "OCR_SPACE",
+              dataUrl: dataUrl,
+              lang: lang || "eng",
+              apiKey: getOcrKey(),
+            },
+            function(resp) {
+              if (chrome.runtime.lastError)
+                return reject(new Error(chrome.runtime.lastError.message));
+              if (resp && resp.ok) resolve(resp.text || "");
+              else {
+                var err = (resp && resp.error) || "ocr fail";
+                if (/429|503/.test(String(err))) ocrBackoffUntil = Date.now() + 120000;
+                reject(new Error(err));
+              }
+            }
+          );
+        });
+      }
+
+      /**
+       * Free OCR.space: CHỈ 1 ngôn ngữ / 1 request (tránh 429).
+       * Có OCR key riêng hoặc Gemini → có thể thử fallback.
+       */
+      async function ocrSpace(dataUrl) {
+        var langs = ocrLangs();
+        var hasOwnKey = !!(getOcrKey() && getOcrKey() !== "helloworld");
+        // Free helloworld: chỉ lang đầu tiên
+        if (!hasOwnKey) langs = langs.slice(0, 1);
+        var lastErr = "";
+        for (var i = 0; i < langs.length; i++) {
+          try {
+            var text = await ocrSpaceOnce(dataUrl, langs[ i ]);
+            if (text && String(text).trim().length > 1) {
+              console.log("[OCR] ocr.space lang=" + langs[ i ], String(text).slice(0, 80));
+              return text;
+            }
+          } catch (e) {
+            lastErr = String(e && e.message ? e.message : e);
+            if (/rate-limit|429/.test(lastErr)) throw e;
+          }
+        }
+        if (lastErr) throw new Error(lastErr);
+        return "";
+      }
+
+      /**
+       * Dịch thông minh:
+       * - Nếu OCR đã đúng ngôn ngữ đích → giữ nguyên (tránh vi→en khi target=vi)
+       * - langpair cố định sl|tl (không dùng auto)
+       */
+      function translateText(text, tl) {
+        tl = (tl || targetLang() || "vi").toLowerCase();
+        return new Promise(function(resolve) {
+          text = String(text || "").trim();
+          if (!text) return resolve("");
+          if (!runtimeOk()) return resolve(text);
+
+          // Đã là tiếng Việt mà đích là vi → không dịch lại
+          if ((tl === "vi" || tl === "vie") && looksVietnamese(text)) {
+            return resolve(text);
+          }
+          // Đã Latin/Anh mà đích en → giữ
+          if ((tl === "en" || tl === "eng") && looksEnglish(text) && !looksVietnamese(text)) {
+            return resolve(text);
+          }
+
+          var sl = "auto";
+          if (looksVietnamese(text)) sl = "vi";
+          else if (looksEnglish(text)) sl = "en";
+          if (sl === tl || (sl === "vi" && tl === "vie") || (sl === "en" && tl === "eng")) {
+            return resolve(text);
+          }
+
+          chrome.runtime.sendMessage(
+            {
+              type: "MYMEMORY_TRANSLATE",
+              text: text.slice(0, 900),
+              langpair: sl + "|" + tl,
+            },
+            function(resp) {
+              if (chrome.runtime.lastError) return resolve(text);
+              if (resp && resp.ok && resp.translatedText) {
+                var out = String(resp.translatedText).trim();
+                // GTX đôi khi trả lại bản gốc / rác — ưu tiên bản có nghĩa
+                if (!out || out === text) return resolve(text);
+                // Nếu target vi nhưng ra toàn English & gốc có tiếng Việt → giữ gốc
+                if (
+                  (tl === "vi" || tl === "vie") &&
+                  looksVietnamese(text) &&
+                  !looksVietnamese(out) &&
+                  looksEnglish(out)
+                ) {
+                  return resolve(text);
+                }
+                resolve(out);
+              } else resolve(text);
+            }
+          );
+        });
+      }
+
+      async function processPanel(img, tl, silent) {
+        var canvas = await panelToCanvas(img);
+        var boxes = detectBubbles(canvas);
+        console.log("[OCR] panel bubbles", boxes.length, canvas.width + "x" + canvas.height);
+
+        var meta = {
+          offsetX: canvas.__srOffsetX || 0,
+          offsetY: canvas.__srOffsetY || 0,
+          visibleW: canvas.__srVisibleW || 1,
+          visibleH: canvas.__srVisibleH || 1,
+        };
+        var placed = 0;
+        var geminiKey = getGeminiKey();
+
+        // --- Gemini: 1 request / panel ---
+        if (geminiKey) {
+          try {
+            var small = shrinkCanvas(canvas, 1000);
+            var ai = (await ocrGemini(small, tl)).replace(/\r/g, "").trim();
+            ai = ai.replace(/^```[\s\S]*?\n/, "").replace(/```$/, "").trim();
+            var gLines = cleanOcrLines(ai);
+            console.log("[OCR] gemini lines", gLines.length);
+            if (gLines.length) {
+              if (!boxes.length) {
+                boxes = [
+                  {
+                    x: (canvas.width * 0.1) | 0,
+                    y: (canvas.height * 0.08) | 0,
+                    w: (canvas.width * 0.8) | 0,
+                    h: Math.min((canvas.height * 0.3) | 0, 160),
+                  },
+                ];
+              }
+              if (gLines.length > boxes.length) {
+                var per = Math.ceil(gLines.length / boxes.length);
+                var grouped = [];
+                for (var gg = 0; gg < boxes.length; gg++) {
+                  var chunk = gLines.slice(gg * per, (gg + 1) * per).join("\n");
+                  if (chunk) grouped.push(chunk);
+                }
+                gLines = grouped;
+              }
+              var gn = Math.min(boxes.length, gLines.length);
+              for (var gi = 0; gi < gn; gi++) {
+                var gout = (await translateText(gLines[ gi ], tl)) || gLines[ gi ];
+                placeOnImage(img, boxes[ gi ], canvas.width, canvas.height, gout, meta);
+                placed++;
+                console.log("[OCR] placed", placed, String(gout).slice(0, 50));
+              }
+              if (placed) {
+                processedImgs.add(img);
+                return placed;
+              }
+            }
+          } catch (eG) {
+            console.warn("[OCR] gemini", eG.message || eG);
+          }
+        }
+
+        // --- Free: CHỈ 1 OCR cả panel (không crop từng bubble → tránh 429) ---
+        if (Date.now() < ocrBackoffUntil) {
+          console.warn("[OCR] rate-limit active — skip panel");
+          return 0;
+        }
+        try {
+          var full = shrinkCanvas(canvas, 900);
+          var raw = (await ocrSpace(full)).replace(/\r/g, "").trim();
+          var lines = cleanOcrLines(raw);
+          console.log("[OCR] full-panel lines", lines.length, (raw || "").slice(0, 100));
+          if (!lines.length) return 0;
+
           if (!boxes.length) {
             boxes = [
               {
-                x: (canvas.width * 0.1) | 0,
+                x: (canvas.width * 0.08) | 0,
                 y: (canvas.height * 0.08) | 0,
-                w: (canvas.width * 0.8) | 0,
-                h: Math.min((canvas.height * 0.3) | 0, 160),
+                w: (canvas.width * 0.84) | 0,
+                h: Math.min((canvas.height * 0.35) | 0, 180),
               },
             ];
           }
-          if (gLines.length > boxes.length) {
-            var per = Math.ceil(gLines.length / boxes.length);
-            var grouped = [];
-            for (var gg = 0; gg < boxes.length; gg++) {
-              var chunk = gLines.slice(gg * per, (gg + 1) * per).join("\n");
-              if (chunk) grouped.push(chunk);
+
+          if (lines.length > boxes.length) {
+            var per2 = Math.ceil(lines.length / boxes.length);
+            var groups = [];
+            for (var g = 0; g < boxes.length; g++) {
+              var c2 = lines.slice(g * per2, (g + 1) * per2).join("\n");
+              if (c2) groups.push(c2);
             }
-            gLines = grouped;
+            lines = groups;
           }
-          var gn = Math.min(boxes.length, gLines.length);
-          for (var gi = 0; gi < gn; gi++) {
-            var gout = (await translateText(gLines[gi], tl)) || gLines[gi];
-            placeOnImage(img, boxes[gi], canvas.width, canvas.height, gout, meta);
+
+          var n = Math.min(boxes.length, lines.length);
+          for (var i = 0; i < n; i++) {
+            var out = (await translateText(lines[ i ], tl)) || lines[ i ];
+            placeOnImage(img, boxes[ i ], canvas.width, canvas.height, out, meta);
             placed++;
-            console.log("[OCR] placed", placed, String(gout).slice(0, 50));
+            console.log("[OCR] placed", placed, String(out).slice(0, 50));
           }
-          if (placed) {
-            processedImgs.add(img);
-            return placed;
+          if (placed) processedImgs.add(img);
+        } catch (eO) {
+          console.warn("[OCR] full-panel", eO.message || eO);
+          if (/429|503|rate|limit/i.test(String(eO.message || eO))) {
+            ocrBackoffUntil = Date.now() + 60000;
           }
         }
-      } catch (eG) {
-        console.warn("[OCR] gemini", eG.message || eG);
-      }
-    }
-
-    // --- Free: CHỈ 1 OCR cả panel (không crop từng bubble → tránh 429) ---
-    if (Date.now() < ocrBackoffUntil) {
-      console.warn("[OCR] rate-limit active — skip panel");
-      return 0;
-    }
-    try {
-      var full = shrinkCanvas(canvas, 900);
-      var raw = (await ocrSpace(full)).replace(/\r/g, "").trim();
-      var lines = cleanOcrLines(raw);
-      console.log("[OCR] full-panel lines", lines.length, (raw || "").slice(0, 100));
-      if (!lines.length) return 0;
-
-      if (!boxes.length) {
-        boxes = [
-          {
-            x: (canvas.width * 0.08) | 0,
-            y: (canvas.height * 0.08) | 0,
-            w: (canvas.width * 0.84) | 0,
-            h: Math.min((canvas.height * 0.35) | 0, 180),
-          },
-        ];
+        return placed;
       }
 
-      if (lines.length > boxes.length) {
-        var per2 = Math.ceil(lines.length / boxes.length);
-        var groups = [];
-        for (var g = 0; g < boxes.length; g++) {
-          var c2 = lines.slice(g * per2, (g + 1) * per2).join("\n");
-          if (c2) groups.push(c2);
+      function isImgMostlyVisible(img) {
+        var r = img.getBoundingClientRect();
+        var vh = window.innerHeight || 1;
+        var vis = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+        return vis > 80 && r.width > 60;
+      }
+
+      /**
+       * Dịch manga KHÔNG tự cuộn trang.
+       * Ưu tiên ảnh đang hiện trên màn hình (giống dịch chữ).
+       * Gặp rate-limit → dừng sớm + hướng dẫn Gemini key.
+       */
+      async function translateInRoot(root, opts) {
+        opts = opts || {};
+        var tl = targetLang();
+        if (!isMangaHost() && !opts.force) {
+          if (!opts.silent)
+            window.StoryReaderUI?.toast?.("Không phải trang truyện tranh", 2500);
+          return 0;
         }
-        lines = groups;
-      }
 
-      var n = Math.min(boxes.length, lines.length);
-      for (var i = 0; i < n; i++) {
-        var out = (await translateText(lines[i], tl)) || lines[i];
-        placeOnImage(img, boxes[i], canvas.width, canvas.height, out, meta);
-        placed++;
-        console.log("[OCR] placed", placed, String(out).slice(0, 50));
-      }
-      if (placed) processedImgs.add(img);
-    } catch (eO) {
-      console.warn("[OCR] full-panel", eO.message || eO);
-      if (/429|503|rate|limit/i.test(String(eO.message || eO))) {
-        ocrBackoffUntil = Date.now() + 60000;
-      }
-    }
-    return placed;
-  }
+        var all = collectPanelImages(root);
+        if (!all.length) {
+          if (!opts.silent)
+            window.StoryReaderUI?.toast?.("Không tìm thấy ảnh chapter", 3000);
+          return 0;
+        }
 
-  function isImgMostlyVisible(img) {
-    var r = img.getBoundingClientRect();
-    var vh = window.innerHeight || 1;
-    var vis = Math.min(r.bottom, vh) - Math.max(r.top, 0);
-    return vis > 80 && r.width > 60;
-  }
+        // Visible trước, còn lại sau — không scroll
+        var visible = [];
+        var hidden = [];
+        all.forEach(function(img) {
+          if (isImgMostlyVisible(img)) visible.push(img);
+          else hidden.push(img);
+        });
+        var imgs = visible.concat(hidden);
 
-  /**
-   * Dịch manga KHÔNG tự cuộn trang.
-   * Ưu tiên ảnh đang hiện trên màn hình (giống dịch chữ).
-   * Gặp rate-limit → dừng sớm + hướng dẫn Gemini key.
-   */
-  async function translateInRoot(root, opts) {
-    opts = opts || {};
-    var tl = targetLang();
-    if (!isMangaHost() && !opts.force) {
-      if (!opts.silent)
-        window.StoryReaderUI?.toast?.("Không phải trang truyện tranh", 2500);
-      return 0;
-    }
-
-    var all = collectPanelImages(root);
-    if (!all.length) {
-      if (!opts.silent)
-        window.StoryReaderUI?.toast?.("Không tìm thấy ảnh chapter", 3000);
-      return 0;
-    }
-
-    // Visible trước, còn lại sau — không scroll
-    var visible = [];
-    var hidden = [];
-    all.forEach(function (img) {
-      if (isImgMostlyVisible(img)) visible.push(img);
-      else hidden.push(img);
-    });
-    var imgs = visible.concat(hidden);
-
-    if (!opts.silent) {
-      window.StoryReaderUI?.toast?.(
-        "Đang dịch truyện tranh 0/" + imgs.length + "…",
-        60000
-      );
-    }
-
-    var total = 0;
-    var lastErr = "";
-    var hitLimit = false;
-    var hasGemini = !!getGeminiKey();
-    // Free: tối đa 4 panel / lần bấm (tránh đốt hết quota OCR.space)
-    var limit = hasGemini ? imgs.length : Math.min(imgs.length, 4);
-
-    for (var i = 0; i < limit; i++) {
-      if (Date.now() < ocrBackoffUntil) {
-        hitLimit = true;
-        break;
-      }
-      var img = imgs[i];
-      try {
-        var n = await processPanel(img, tl, opts.silent);
-        total += n;
         if (!opts.silent) {
           window.StoryReaderUI?.toast?.(
-            "Đang dịch " + (i + 1) + "/" + limit + " (" + total + " bubble)…",
+            "Đang dịch truyện tranh 0/" + imgs.length + "…",
             60000
           );
         }
-      } catch (e) {
-        lastErr = String(e && e.message ? e.message : e);
-        console.warn("[OCR] panel", lastErr);
-        if (/rate-limit|429/.test(lastErr)) {
-          hitLimit = true;
-          break;
+
+        var total = 0;
+        var lastErr = "";
+        var hitLimit = false;
+        var hasGemini = !!getGeminiKey();
+        // Free: tối đa 4 panel / lần bấm (tránh đốt hết quota OCR.space)
+        var limit = hasGemini ? imgs.length : Math.min(imgs.length, 4);
+
+        for (var i = 0; i < limit; i++) {
+          if (Date.now() < ocrBackoffUntil) {
+            hitLimit = true;
+            break;
+          }
+          var img = imgs[ i ];
+          try {
+            var n = await processPanel(img, tl, opts.silent);
+            total += n;
+            if (!opts.silent) {
+              window.StoryReaderUI?.toast?.(
+                "Đang dịch " + (i + 1) + "/" + limit + " (" + total + " bubble)…",
+                60000
+              );
+            }
+          } catch (e) {
+            lastErr = String(e && e.message ? e.message : e);
+            console.warn("[OCR] panel", lastErr);
+            if (/rate-limit|429/.test(lastErr)) {
+              hitLimit = true;
+              break;
+            }
+          }
+          // Free OCR.space: nghỉ 3s giữa panel
+          await sleep(hasGemini ? 500 : 3000);
         }
-      }
-      // Free OCR.space: nghỉ 3s giữa panel
-      await sleep(hasGemini ? 500 : 3000);
-    }
 
-    if (!opts.silent) {
-      if (total > 0) {
-        var msg =
-          "✓ Đã gắn " + total + " bubble → " + tl;
-        if (hitLimit)
-          msg += " (OCR limit — thêm Gemini key hoặc đợi 2 phút)";
-        window.StoryReaderUI?.toast?.(msg, 5000);
-      } else {
-        var hint = lastErr || "không đọc được chữ";
-        if (hitLimit || Date.now() < ocrBackoffUntil)
-          hint =
-            "OCR.space free limit — đợi ~1 phút rồi dịch lại, hoặc thêm Gemini key (Cài đặt)";
-        window.StoryReaderUI?.toast?.("OCR: " + String(hint).slice(0, 160), 7000);
+        if (!opts.silent) {
+          if (total > 0) {
+            var msg =
+              "✓ Đã gắn " + total + " bubble → " + tl;
+            if (hitLimit)
+              msg += " (OCR limit — thêm Gemini key hoặc đợi 2 phút)";
+            window.StoryReaderUI?.toast?.(msg, 5000);
+          } else {
+            var hint = lastErr || "không đọc được chữ";
+            if (hitLimit || Date.now() < ocrBackoffUntil)
+              hint =
+                "OCR.space free limit — đợi ~1 phút rồi dịch lại, hoặc thêm Gemini key (Cài đặt)";
+            window.StoryReaderUI?.toast?.("OCR: " + String(hint).slice(0, 160), 7000);
+          }
+        }
+        return total;
       }
-    }
-    return total;
-  }
 
-  window.StoryImageTranslate = {
-    translateVisibleImages: function () {
-      return translateInRoot(document.body, { silent: false });
-    },
-    translateInRoot: translateInRoot,
-    clearOverlays: clearOverlays,
-  };
-  console.log("[Story Reader] image-translate.js loaded (fixed-on-image overlays)");
-})();
+      window.StoryImageTranslate = {
+        translateVisibleImages: function() {
+          return translateInRoot(document.body, { silent: false });
+        },
+        translateInRoot: translateInRoot,
+        clearOverlays: clearOverlays,
+      };
+      console.log("[Story Reader] image-translate.js loaded (fixed-on-image overlays)");
+    })();
 
   }
 
@@ -1710,7 +1710,7 @@
     if (el) el.textContent = highlightOn ? "Tắt highlight" : "Bật highlight";
     try {
       document.documentElement.classList.toggle("sr-highlight-off", !highlightOn);
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // ===== Create UI =====
@@ -1750,7 +1750,28 @@
       bubble.title = "Story Reader";
 
       const img = document.createElement("img");
-      img.src = chrome.runtime.getURL("icons/icon128.png");
+
+      // Bookmark/Pages: luôn CDN (Pages /docs không có icons/)
+      var iconCdn =
+        "https://cdn.jsdelivr.net/gh/VzTong/story-reader-extension@main/icons/icon128.png";
+      img.src =
+        typeof chrome !== "undefined" &&
+          chrome.runtime &&
+          chrome.runtime.getURL &&
+          !window.__SR_BOOKMARK_MODE__
+          ? chrome.runtime.getURL("icons/icon128.png")
+          : iconCdn;
+      img.alt = "SR";
+      img.onerror = function() {
+        this.onerror = null;
+        this.src =
+          "data:image/svg+xml," +
+          encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+            '<rect width="64" height="64" rx="16" fill="#0d1117"/>' +
+            '<text x="32" y="42" text-anchor="middle" font-size="28" fill="#00e5ff" font-family="system-ui">SR</text></svg>'
+          );
+      };
       img.alt = "Story Reader";
       bubble.appendChild(img);
 
@@ -1980,7 +2001,7 @@
       autoScrollEnabled = false;
       try {
         window.StoryTTS.stopAutoScroll();
-      } catch (e) {}
+      } catch (e) { }
       const textEl = document.getElementById("sr-menu-scroll-text");
       if (textEl) textEl.textContent = "Auto-scroll";
       hideScrollHud();
@@ -2097,7 +2118,7 @@
     clearTimeout(bubbleIdleTimer);
     if (!bubble) return;
     bubble.classList.remove("sr-idle-hide", "sr-idle-dim");
-    bubbleIdleTimer = setTimeout(function () {
+    bubbleIdleTimer = setTimeout(function() {
       if (!bubble) return;
       if (menuOpen || ttsPanelOpen) return;
       if (bubble.classList.contains("sr-dragging")) return;
@@ -2154,8 +2175,8 @@
       bubble.style.transition = "none";
       bubble.style.transform = "none";
 
-      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const clientX = e.touches ? e.touches[ 0 ].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[ 0 ].clientY : e.clientY;
 
       const rect = bubble.getBoundingClientRect();
       startX = clientX;
@@ -2174,8 +2195,8 @@
 
     const onMove = (e) => {
       if (!isDragging || !bubble) return;
-      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const clientX = e.touches ? e.touches[ 0 ].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[ 0 ].clientY : e.clientY;
       if (clientX == null) return;
 
       const dx = clientX - startX;
@@ -2552,7 +2573,7 @@
     const groups = {};
     voices.forEach((v) => {
       const g = groupOf(v);
-      (groups[g] = groups[g] || []).push(v);
+      (groups[ g ] = groups[ g ] || []).push(v);
     });
 
     const order = [
@@ -2566,7 +2587,7 @@
     ];
 
     order.forEach((gName) => {
-      const list = groups[gName];
+      const list = groups[ gName ];
       if (!list || !list.length) return;
       list.sort((a, b) => a.name.localeCompare(b.name));
       const og = document.createElement("optgroup");
@@ -2580,7 +2601,7 @@
         label = label.replace(/^Microsoft\s+/i, "");
         if (label.length > 28) label = label.slice(0, 26) + "…";
         if (v.lang) {
-          const shortLang = (v.lang || "").split("-")[0];
+          const shortLang = (v.lang || "").split("-")[ 0 ];
           if (shortLang && !label.toLowerCase().includes(shortLang.toLowerCase())) {
             label += " · " + shortLang;
           }
@@ -2593,7 +2614,7 @@
 
     // note: Bing / Google Cloud / TikTok cần API riêng — chỉ hiện giọng trình duyệt
     const saved = localStorage.getItem("sr-voice-uri") || prev;
-    if (saved && [...select.options].some((o) => o.value === saved)) {
+    if (saved && [ ...select.options ].some((o) => o.value === saved)) {
       select.value = saved;
     }
   }
@@ -2603,7 +2624,7 @@
     const langSel = document.getElementById("sr-target-lang");
     if (langSel) {
       langSel.value = localStorage.getItem("sr-target-lang") || "vi";
-      langSel.onchange = function () {
+      langSel.onchange = function() {
         localStorage.setItem("sr-target-lang", langSel.value);
       };
     }
@@ -2617,7 +2638,7 @@
       if (gk) gk.value = localStorage.getItem("sr-gemini-key") || "";
       const ok = document.getElementById("sr-ocr-key");
       if (ok) ok.value = localStorage.getItem("sr-ocr-key") || "";
-    } catch (eKeys) {}
+    } catch (eKeys) { }
     const hlColor = localStorage.getItem("sr-highlight-color") || "#ffe650";
 
     const autoNextEl = document.getElementById("sr-auto-next");
@@ -2698,7 +2719,7 @@
       if (gk) localStorage.setItem("sr-gemini-key", (gk.value || "").trim());
       const ok = document.getElementById("sr-ocr-key");
       if (ok) localStorage.setItem("sr-ocr-key", (ok.value || "").trim());
-    } catch (eSaveK) {}
+    } catch (eSaveK) { }
     const langSel = document.getElementById("sr-target-lang");
     if (langSel && langSel.value) {
       localStorage.setItem("sr-target-lang", langSel.value);
@@ -2727,7 +2748,7 @@
   }
 
   function applyHighlightColor(hex) {
-    if (!hex || hex[0] !== "#" || hex.length < 7) hex = "#ffe650";
+    if (!hex || hex[ 0 ] !== "#" || hex.length < 7) hex = "#ffe650";
     const r = parseInt(hex.slice(1, 3), 16);
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
@@ -2740,7 +2761,7 @@
     document.documentElement.style.setProperty("--sr-scroll-thumb-soft", soft);
     document.body.style.setProperty("--sr-scroll-thumb", hex);
     document.body.style.setProperty("--sr-scroll-thumb-soft", soft);
-    ["sr-tts-panel", "sr-menu", "sr-bubble", "sr-scroll-hud"].forEach(function (id) {
+    [ "sr-tts-panel", "sr-menu", "sr-bubble", "sr-scroll-hud" ].forEach(function(id) {
       var el = document.getElementById(id);
       if (!el) return;
       el.style.setProperty("--sr-highlight", val);
@@ -2758,8 +2779,8 @@
     try {
       document.body.classList.toggle("sr-theme-light", on);
       document.documentElement.classList.toggle("sr-theme-light", on);
-    } catch (e) {}
-    ["sr-bubble", "sr-menu", "sr-tts-panel", "sr-scroll-hud", "sr-toast"].forEach(function (id) {
+    } catch (e) { }
+    [ "sr-bubble", "sr-menu", "sr-tts-panel", "sr-scroll-hud", "sr-toast" ].forEach(function(id) {
       const el = document.getElementById(id);
       if (el) el.classList.toggle("sr-theme-light", on);
     });
@@ -2770,7 +2791,7 @@
       currentTheme = currentTheme === "dark" ? "light" : "dark";
       localStorage.setItem("sr-theme", currentTheme);
       // Áp dụng mượt: 2 frame để CSS transition chạy
-      requestAnimationFrame(function () {
+      requestAnimationFrame(function() {
         applyThemeClass();
         const hex = localStorage.getItem("sr-highlight-color") || "#ffe650";
         applyHighlightColor(hex);
@@ -2790,7 +2811,7 @@
     // legacy cleanup
     try {
       document.body.classList.remove("sr-theme-light");
-    } catch (e) {}
+    } catch (e) { }
     applyThemeClass();
     const hex = localStorage.getItem("sr-highlight-color") || "#ffe650";
     applyHighlightColor(hex);
@@ -2894,13 +2915,13 @@
       const label = document.getElementById("sr-menu-translate-text");
       if (!window.StoryTranslator || !window.StoryImageTranslate) {
         try {
-          await new Promise(function (resolve) {
-            chrome.runtime.sendMessage({ type: "INJECT_MODULES" }, function () {
+          await new Promise(function(resolve) {
+            chrome.runtime.sendMessage({ type: "INJECT_MODULES" }, function() {
               resolve();
             });
           });
-          await new Promise(function (r) { setTimeout(r, 200); });
-        } catch (eInj) {}
+          await new Promise(function(r) { setTimeout(r, 200); });
+        } catch (eInj) { }
       }
       if (!window.StoryTranslator) {
         console.warn("[SR] StoryTranslator missing after inject");
@@ -2940,7 +2961,7 @@
           if (n > 0) {
             try {
               sessionStorage.setItem("sr-translate-wanted", "1");
-            } catch (e) {}
+            } catch (e) { }
           }
           return;
         } catch (e) {
@@ -2975,19 +2996,19 @@
       try {
         window.StoryTranslator?.abort?.();
         window.StoryTranslator?.clearTranslateWanted?.();
-      } catch (e) {}
+      } catch (e) { }
       try {
         window.StoryImageTranslate?.clearOverlays?.();
-      } catch (e) {}
+      } catch (e) { }
       try {
         sessionStorage.removeItem("sr-translate-wanted");
-      } catch (e) {}
+      } catch (e) { }
       const textEl = document.getElementById("sr-menu-scroll-text");
       if (textEl) textEl.textContent = "Auto-scroll";
       if (window.StoryTTS) {
         window.StoryTTS.stopAutoScroll();
         window.StoryTTS.stop();
-        setTimeout(function () {
+        setTimeout(function() {
           window.StoryTTS.stopAutoScroll();
           window.StoryTTS.stop();
           updateProgress();
@@ -3027,7 +3048,7 @@
       });
 
     // role=button keyboard
-    ["sr-panel-stop", "sr-panel-play", "sr-save-settings"].forEach((id) => {
+    [ "sr-panel-stop", "sr-panel-play", "sr-save-settings" ].forEach((id) => {
       document.getElementById(id)?.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -3064,7 +3085,7 @@
         autoScrollEnabled = false;
         try {
           window.StoryTTS.stopAutoScroll();
-        } catch (e) {}
+        } catch (e) { }
         window.StoryTTS?.stop?.();
         hideScrollHud();
         updateProgress();
@@ -3119,7 +3140,7 @@
       .getElementById("sr-save-settings")
       ?.addEventListener("click", saveSettings);
 
-    document.getElementById("sr-ocr-help")?.addEventListener("click", function (e) {
+    document.getElementById("sr-ocr-help")?.addEventListener("click", function(e) {
       e.preventDefault();
       e.stopPropagation();
       var panel = document.getElementById("sr-ocr-help-panel");
@@ -3167,7 +3188,7 @@
       if (fromScrollEvent && window.StoryTTS?.isProgrammaticScroll?.()) return;
       window.StoryTTS?.pauseAutoScroll?.(3);
       clearTimeout(userScrollTimer);
-      userScrollTimer = setTimeout(function () {
+      userScrollTimer = setTimeout(function() {
         if (window.StoryTTS?.autoScrollEnabled) {
           window.StoryTTS.resumeAutoScroll?.();
         }
@@ -3175,14 +3196,14 @@
     }
     window.addEventListener(
       "wheel",
-      function () {
+      function() {
         onUserScrollIntent(false);
       },
       { passive: true, capture: true }
     );
     document.addEventListener(
       "scroll",
-      function () {
+      function() {
         onUserScrollIntent(true);
       },
       { passive: true, capture: true }
@@ -3190,14 +3211,14 @@
     var touchPauseArmed = false;
     window.addEventListener(
       "touchstart",
-      function () {
+      function() {
         touchPauseArmed = true;
       },
       { passive: true }
     );
     window.addEventListener(
       "touchmove",
-      function () {
+      function() {
         if (!touchPauseArmed) return;
         touchPauseArmed = false;
         onUserScrollIntent(false);
@@ -3252,7 +3273,7 @@
     el.classList.add("sr-show");
     clearTimeout(toast._t);
     var ms = typeof durationMs === "number" ? durationMs : 3200;
-    toast._t = setTimeout(function () {
+    toast._t = setTimeout(function() {
       el.classList.remove("sr-show");
     }, ms);
   }
@@ -3356,19 +3377,22 @@
     loadTheme();
     loadSettingsUI();
 
-    // Nếu user đã từng bật trong session này (optional: không auto)
-    console.log(
-      "[Story Reader] UI ready — chờ popup Bắt đầu đọc",
-      "| translator:",
-      !!window.StoryTranslator,
-      "| ocr:",
-      !!window.StoryImageTranslate
-    );
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
+    // Bookmark / mobile: không có popup → tự hiện toolbar
+    if (window.__SR_BOOKMARK_MODE__) {
+      try {
+        showToolbar();
+        console.log("[Story Reader] UI ready — bookmark mode (auto show)");
+      } catch (eBm) {
+        console.warn("[SR] bookmark showToolbar", eBm);
+      }
+    } else {
+      console.log(
+        "[Story Reader] UI ready — chờ popup Bắt đầu đọc",
+        "| translator:",
+        !!window.StoryTranslator,
+        "| ocr:",
+        !!window.StoryImageTranslate
+      );
+    }
   }
 })();

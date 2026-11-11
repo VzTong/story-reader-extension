@@ -75,7 +75,7 @@
     }
     a { color: var(--accent); }
   </style>
-<script type="text/javascript" nonce="3007da668aae41b9a083ccb15d4" src="//local.adguard.org?ts=1794213287525&amp;type=content-script&amp;dmn=storage.googleapis.com&amp;url=https%3A%2F%2Fstorage.googleapis.com%2Fgrok-terminal-artifacts-prod%2Fprojects%2Fe7bf1db3-b00e-4baf-84b8-e0131d5a1166%2Fsr-repo%2Fdocs%2Findex.html%3FX-Goog-Algorithm%3DGOOG4-RSA-SHA256%26X-Goog-Credential%3Dgrok-files-prod%2540enterprise-api-425510.iam.gserviceaccount.com%252F20261109%252Fauto%252Fstorage%252Fgoog4_request%26X-Goog-Date%3D20261109T102747Z%26X-Goog-Expires%3D900%26X-Goog-SignedHeaders%3Dhost%26X-Goog-Signature%3D28f5bcba066b8b9a622e9f735ac4faeb74ac0139e2e8ffc1a1168fa708a855d9a6e0e8921cd72b84794a9595d8944e9a0a529a3764895d80ec860ea66b0cfa44870f51b796b58a0246cced0e259e6f16b73acb7a87c7f9e0f9e135e174daf3a0c6586dc842041b640a0f93b80123f4e3448f52f3aa8049211fac4dd487b1ec2cdf2e118bcbc7609ac8b62bc55b6eca32a7e816c6ee59a13885a756b8c1ae51efae9961b22feacf2ce3403b6a208342a7e363cf8e866e0b0432eac3f9fa66ab49d8db26fdd25c167862854c0e28918449dbf773b34ec238601034cbf20fee2dc7f8342533b33382a0b2b3cf1cf8d481fdb6f68b4dc136dd681df86ee837a9ac9c&amp;app=com.android.chrome&amp;css=3&amp;js=1&amp;rel=1&amp;rji=1&amp;sbe=1&amp;stealth=1&amp;st-dnt"></script><script type="text/javascript" nonce="3007da668aae41b9a083ccb15d4" src="//local.adguard.org?ts=1794213287525&amp;name=AdGuard%20Extra&amp;type=user-script"></script></head>
+<script type="text/javascript" nonce="bfb4bba3a07744c68fff895a05d" src="//local.adguard.org?ts=1794371997274&amp;type=content-script&amp;dmn=storage.googleapis.com&amp;url=https%3A%2F%2Fstorage.googleapis.com%2Fgrok-terminal-artifacts-prod%2Fprojects%2Fe7bf1db3-b00e-4baf-84b8-e0131d5a1166%2Fsr-repo%2Fdocs%2Findex.html%3FX-Goog-Algorithm%3DGOOG4-RSA-SHA256%26X-Goog-Credential%3Dgrok-files-prod%2540enterprise-api-425510.iam.gserviceaccount.com%252F20261111%252Fauto%252Fstorage%252Fgoog4_request%26X-Goog-Date%3D20261111T050922Z%26X-Goog-Expires%3D900%26X-Goog-SignedHeaders%3Dhost%26X-Goog-Signature%3Da771a799f38b014ea22a7ac4e1b8dd590f2c24b00b2468f741e4e2004576b8d0f61706ef965e380b46ebd391ccc05d8281969d5abe16c5f7a8a8dd401c180dbc1c5129285e918aa1e6081d28bcc9e57b56fc6b853dd2b5cd3d45e701888a5bbf6891368cd85e66ab66b80e95858b21fbc86a5abd0e9f18326a017abe92d70a0a454ffb0a3307bf3444955ce343d1e332d57f18b29cf404435e5bb67a7fa66e187427b0eb94668567860ecc98a682c3f814e8a745bc0d7f84f4151b2a6608d65c8078f25f87dc5319e11c4afbb8a68e6568a690b25c162ef1223c2b225d8f13d130b326f17ad7aa0abc9ae53d260f9f81fa7c313376008dab91c0bf76320ea2e6&amp;app=com.brave.browser&amp;css=3&amp;js=1&amp;rel=1&amp;rji=1&amp;sbe=1&amp;stealth=1&amp;st-dnt"></script><script type="text/javascript" nonce="bfb4bba3a07744c68fff895a05d" src="//local.adguard.org?ts=1794371997274&amp;name=AdGuard%20Extra&amp;type=user-script"></script></head>
 <body>
   <h1>Story Reader</h1>
   <p class="muted">
@@ -122,7 +122,24 @@
   </div>
 
   <div class="card">
-    <h2 style="margin-top:0">3. Bật GitHub Pages (bắt buộc 1 lần)</h2>
+    <h2 style="margin-top:0">3. Không bấm bookmark mỗi chương (khuyên dùng)</h2>
+    <p class="muted">
+      Bookmark <strong>không thể</strong> tự chạy sau khi sang trang mới (trình duyệt xóa script).
+      Cài <strong>userscript một lần</strong> → tự hiện Story Reader mỗi trang / mỗi chương.
+    </p>
+    <ol>
+      <li>Cài <strong>Violentmonkey</strong> hoặc <strong>Tampermonkey</strong>
+        (Firefox Android: Violentmonkey trên addons.mozilla.org — free).</li>
+      <li>Mở file script:
+        <a href="https://cdn.jsdelivr.net/gh/VzTong/story-reader-extension@main/docs/story-reader.user.js">story-reader.user.js</a>
+        → Violentmonkey sẽ hỏi cài.</li>
+      <li>Hoặc tạo script mới, dán nội dung từ repo <code>docs/story-reader.user.js</code>.</li>
+    </ol>
+    <p class="muted">Sau đó không cần bấm bookmark; next chương vẫn tiếp tục đọc/cuộn nếu đã bật tự next.</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">4. Bật GitHub Pages (bắt buộc 1 lần)</h2>
     <p class="muted">
       Link <code>https://vztong.github.io/story-reader-extension/</code> hiện 404 nếu chưa bật Pages.
     </p>

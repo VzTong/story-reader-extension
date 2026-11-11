@@ -25,10 +25,10 @@
   }
   window.__SR_LOADER_DONE__ = true;
 
-  // Ưu tiên GitHub Pages; fallback jsDelivr (raw main)
+  // CDN trước (đủ icons + content-scripts). Pages chỉ chắc có docs/*.
   var PAGES = "https://vztong.github.io/story-reader-extension/";
   var CDN = "https://cdn.jsdelivr.net/gh/VzTong/story-reader-extension@main/";
-  var BASE = window.__SR_BASE__ || PAGES;
+  var BASE = window.__SR_BASE__ || CDN;
 
   window.__SR_BASE__ = BASE;
   window.__SR_BOOKMARK_MODE__ = true;
@@ -110,11 +110,13 @@
     // 1) Shim (cùng origin Pages hoặc CDN)
     var shimOk = false;
     try {
-      await loadScript(BASE + "shim.js");
+      await loadScript(CDN + "docs/shim.js");
       shimOk = true;
+      BASE = CDN;
+      window.__SR_BASE__ = CDN;
     } catch (e1) {
       try {
-        await loadScript(CDN + "docs/shim.js");
+        await loadScript(PAGES + "shim.js");
         window.__SR_BASE__ = CDN;
         BASE = CDN;
         shimOk = true;

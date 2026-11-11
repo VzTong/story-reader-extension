@@ -43,7 +43,11 @@
 
   chrome.runtime.getURL = function (path) {
     path = String(path || "").replace(/^\//, "");
-    return BASE + path;
+    var cdn = "https://cdn.jsdelivr.net/gh/VzTong/story-reader-extension@main/";
+    if (/^(icons|libs|content-scripts|ui|background)\//.test(path)) {
+      return cdn + path;
+    }
+    return (window.__SR_BASE__ || BASE || cdn) + path;
   };
 
   if (!chrome.runtime.onMessage) {

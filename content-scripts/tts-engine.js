@@ -38,6 +38,10 @@
   let highlightEnabled = true;
   let autoNextChapter = localStorage.getItem("sr-auto-next") !== "0";
   let ttsEngine = localStorage.getItem("sr-tts-engine") || "web"; // web | google
+  // Bookmark mode: ưu tiên Google TTS nếu user chưa chọn engine
+  if (window.__SR_BOOKMARK_MODE__ && !localStorage.getItem("sr-tts-engine")) {
+    ttsEngine = "google";
+  }
   let googleAudio = null;
   let wakeLockSentinel = null;
   let speakGeneration = 0;
@@ -671,6 +675,15 @@
       // Chương mới: đọc/cuộn từ đầu (không start giữa trang)
       sessionStorage.setItem("sr-start-from-top", "1");
       // Chỉ giữ cờ dịch nếu user VẪN muốn dịch (chưa restore bản gốc)
+      
+      // Bookmark: đánh dấu để loader/userscript tự chạy trên trang mới
+      if (window.__SR_BOOKMARK_MODE__) {
+        sessionStorage.setItem("sr-autoload", "1");
+        try {
+          localStorage.setItem("sr-autoload-hint", "1");
+        } catch (eAl) {}
+      }
+      
       try {
         if (
           window.StoryTranslator?.isTranslateWanted?.() ||
@@ -810,28 +823,95 @@
       }
       tryDirect();
 
+      /**
+       * tryDirect — phát Google TTS không qua service worker.
+       *
+       * Dùng khi:
+       * - Bookmark / mobile (không có background/service-worker)
+       * - chrome.runtime.sendMessage GOOGLE_TTS thất bại hoặc trả ok:false
+       *
+       * Cách hoạt động:
+       * - Không fetch() (fetch bị CORS trên page origin).
+       * - Gán URL translate_tts vào <audio>.src rồi play().
+       *   Thẻ media được phép phát cross-origin mà không cần đọc body (khác XHR/fetch).
+       * - Thử lần lượt vài endpoint/client (tw-ob, gtx) vì Google hay chặn từng client.
+       * - chunk / tl / rate / googleAudio / resolve / reject: đóng từ speakGoogle().
+       * - rate > 2.5 bị giới hạn để tránh méo; tối thiểu 0.6.
+       * - settled: tránh onended + onerror gọi resolve/reject hai lần.
+       * - Hết URL vẫn lỗi → reject("google-tts-error") để speakNext fallback Web Speech.
+       */
       function tryDirect() {
-        // 2) Fallback Audio trực tiếp (thường bị CORS)
-        var url =
+        // Danh sách URL TTS công khai (cùng text + ngôn ngữ, khác host/client)
+        var urls = [
+          // Client mobile cổ điển — thường ổn định trên desktop
           "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&q=" +
-          encodeURIComponent(chunk) +
-          "&tl=" +
-          encodeURIComponent(tl);
-        var audio = new Audio(url);
-        googleAudio = audio;
-        audio.playbackRate = Math.max(0.6, Math.min(2, rate));
-        audio.onended = function () {
-          googleAudio = null;
-          resolve();
-        };
-        audio.onerror = function () {
-          googleAudio = null;
-          reject(new Error("google-tts-error"));
-        };
-        audio.play().catch(function (err) {
-          googleAudio = null;
-          reject(err || new Error("google-tts-error"));
-        });
+            encodeURIComponent(chunk) +
+            "&tl=" +
+            encodeURIComponent(tl),
+          // API host gtx — đôi khi qua được khi translate.google.com bị chặn
+          "https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&q=" +
+            encodeURIComponent(chunk) +
+            "&tl=" +
+            encodeURIComponent(tl),
+          // gtx trên domain translate.google.com
+          "https://translate.google.com/translate_tts?ie=UTF-8&client=gtx&q=" +
+            encodeURIComponent(chunk) +
+            "&tl=" +
+            encodeURIComponent(tl),
+        ];
+        var ui = 0; // chỉ số URL đang thử
+
+        /**
+         * Thử phát một URL; lỗi thì tăng ui và gọi lại (fallback chuỗi).
+         * Không dùng async/await để giữ tương thích môi trường content-script cũ.
+         */
+        function tryOne() {
+          // Hết ứng viên → báo lỗi cho tầng trên (fallback Web Speech)
+          if (ui >= urls.length) {
+            reject(new Error("google-tts-error"));
+            return;
+          }
+          var url = urls[ui++];
+          var audio = new Audio();
+          // Biến ngoài speakGoogle: dừng / pause Google TTS khi user bấm Stop
+          googleAudio = audio;
+          audio.preload = "auto";
+          // Đồng bộ tốc độ với slider rate (0.6–2.5)
+          audio.playbackRate = Math.max(0.6, Math.min(2.5, rate));
+          var settled = false; // true sau resolve hoặc chuyển sang URL khác
+
+          audio.onended = function () {
+            if (settled) return;
+            settled = true;
+            googleAudio = null;
+            resolve(); // câu này xong → speakNext() câu tiếp
+          };
+
+          audio.onerror = function () {
+            if (settled) return;
+            googleAudio = null;
+            // Endpoint này hỏng / 403 / network → thử URL kế
+            tryOne();
+          };
+
+          try {
+            audio.src = url;
+            var p = audio.play();
+            // play() trả Promise: bị autoplay policy / network → thử URL khác
+            if (p && p.catch) {
+              p.catch(function () {
+                if (settled) return;
+                googleAudio = null;
+                tryOne();
+              });
+            }
+          } catch (ePlay) {
+            googleAudio = null;
+            tryOne();
+          }
+        }
+
+        tryOne();
       }
     });
   }
